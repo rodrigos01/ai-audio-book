@@ -32,7 +32,10 @@ steps:
       - '--add-volume-mount'
       - 'volume=storage-volume,mount-path=/app/storage'
       - '--update-env-vars'
-      - 'STORAGE_BASE_PATH=/app/storage,GOOGLE_APPLICATION_CREDENTIALS=/app/backend/ai-audio-book-key.json,NODE_ENV=production'
+      - 'STORAGE_BASE_PATH=/app/storage,GOOGLE_APPLICATION_CREDENTIALS=/app/backend/ai-audio-book-key.json,NODE_ENV=production,GOOGLE_CLOUD_PROJECT=$PROJECT_ID'
+
+options:
+  logging: CLOUD_LOGGING_ONLY
 
 substitutions:
   _SECRETS_BUCKET: 'ai-audio-book-secrets'
