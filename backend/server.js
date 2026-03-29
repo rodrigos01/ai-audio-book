@@ -4,7 +4,8 @@ const cookieParser = require('cookie-parser');
 const { v4: uuidv4 } = require('uuid');
 const fs = require('fs');
 const path = require('path');
-const { promiseDb: db } = require('./database');
+const FirestoreRepository = require('./firestore-repository');
+const db = new FirestoreRepository();
 const textToSpeech = require('@google-cloud/text-to-speech');
 
 const app = express();
@@ -122,7 +123,7 @@ app.get('/api/voices', (req, res) => {
 
 app.get('/api/titles', async (req, res) => {
   try {
-    const rows = await db.all('SELECT * FROM titles WHERE client_id = ? ORDER BY created_at DESC', [req.clientId]);
+    const rows = await db.getTitles(req.clientId);
     res.json(rows);
   } catch (error) {
     res.status(500).json({ error: error.message });
@@ -134,8 +135,8 @@ app.post('/api/titles', async (req, res) => {
   if (!name) return res.status(400).json({ error: 'Name is required' });
   const id = uuidv4();
   try {
-    await db.run('INSERT INTO titles (id, client_id, name) VALUES (?, ?, ?)', [id, req.clientId, name]);
-    res.json({ id, name, client_id: req.clientId });
+    const title = await db.createTitle({ id, client_id: req.clientId, name });
+    res.json(title);
   } catch (error) {
     res.status(500).json({ error: error.message });
   }
@@ -145,9 +146,9 @@ app.patch('/api/titles/:id', async (req, res) => {
   const { id } = req.params;
   const { name } = req.body;
   try {
-    const title = await db.get('SELECT * FROM titles WHERE id = ? AND client_id = ?', [id, req.clientId]);
+    const title = await db.getTitle(id, req.clientId);
     if (!title) return res.status(404).json({ error: 'Title not found' });
-    await db.run('UPDATE titles SET name = ? WHERE id = ?', [name, id]);
+    await db.updateTitle(id, { name });
     res.json({ id, name });
   } catch (error) {
     res.status(500).json({ error: error.message });
@@ -157,9 +158,9 @@ app.patch('/api/titles/:id', async (req, res) => {
 app.delete('/api/titles/:id', async (req, res) => {
   const { id } = req.params;
   try {
-    const title = await db.get('SELECT * FROM titles WHERE id = ? AND client_id = ?', [id, req.clientId]);
+    const title = await db.getTitle(id, req.clientId);
     if (!title) return res.status(404).json({ error: 'Title not found' });
-    await db.run('DELETE FROM titles WHERE id = ?', [id]);
+    await db.deleteTitle(id);
     res.json({ success: true });
   } catch (error) {
     res.status(500).json({ error: error.message });
@@ -169,7 +170,7 @@ app.delete('/api/titles/:id', async (req, res) => {
 app.get('/api/titles/:titleId/chapters', async (req, res) => {
   const { titleId } = req.params;
   try {
-    const rows = await db.all('SELECT id, title_id, name, order_index, created_at FROM chapters WHERE title_id = ? ORDER BY order_index ASC', [titleId]);
+    const rows = await db.getChapters(titleId);
     res.json(rows);
   } catch (error) {
     res.status(500).json({ error: error.message });
@@ -181,13 +182,23 @@ app.post('/api/titles/:titleId/chapters', async (req, res) => {
   const { content, voice_id, name } = req.body;
   if (!content) return res.status(400).json({ error: 'Content is required' });
   try {
-    const title = await db.get('SELECT * FROM titles WHERE id = ? AND client_id = ?', [titleId, req.clientId]);
+    const title = await db.getTitle(titleId, req.clientId);
     if (!title) return res.status(404).json({ error: 'Title not found' });
-    const lastChapter = await db.get('SELECT MAX(order_index) as max_order FROM chapters WHERE title_id = ?', [titleId]);
-    const orderIndex = (lastChapter && lastChapter.max_order !== null) ? lastChapter.max_order + 1 : 1;
+
+    const maxOrder = await db.getMaxChapterOrder(titleId);
+    const orderIndex = maxOrder + 1;
     const voiceId = voice_id || 'en-US-Chirp3-HD-Aoede';
     const chapterId = uuidv4();
-    await db.run('INSERT INTO chapters (id, title_id, order_index, content, voice_id, name) VALUES (?, ?, ?, ?, ?, ?)', [chapterId, titleId, orderIndex, content, voiceId, name || null]);
+
+    await db.createChapter({ 
+      id: chapterId, 
+      title_id: titleId, 
+      order_index: orderIndex, 
+      content, 
+      voice_id: voiceId, 
+      name: name || null 
+    });
+
     const sections = breakContentIntoSections(content);
     const sectionItems = sections.map((text, i) => ({
       id: uuidv4(),
@@ -207,15 +218,15 @@ app.post('/api/titles/:titleId/chapters', async (req, res) => {
 app.get('/api/chapters/:id', async (req, res) => {
   const { id } = req.params;
   try {
-    const chapter = await db.get('SELECT c.*, t.name as title_name FROM chapters c JOIN titles t ON c.title_id = t.id WHERE c.id = ? AND t.client_id = ?', [id, req.clientId]);
+    const chapter = await db.getChapterWithTitle(id, req.clientId);
     if (!chapter) return res.status(404).json({ error: 'Chapter not found' });
     
     // Fetch sections to calculate estimated duration
-    const sections = await db.all('SELECT id, content FROM chapter_sections WHERE chapter_id = ? ORDER BY section_index ASC', [id]);
+    const sections = await db.getSections(id);
     
     let totalEstimatedDuration = 0;
     const sectionsWithEstimates = sections.map((s, idx) => {
-      const sectionDuration = s.content.length / 8.1 + 0.5; // Adjusted to 8.1 chars/sec for Chirp3 HD
+      const sectionDuration = s.content.length / 8.1 + 0.5;
       const startTime = totalEstimatedDuration;
       totalEstimatedDuration += sectionDuration;
       return {
@@ -239,7 +250,7 @@ app.get('/api/chapters/:id', async (req, res) => {
 app.delete('/api/chapters/:id', async (req, res) => {
   const { id } = req.params;
   try {
-    await db.run('DELETE FROM chapters WHERE id = ?', [id]);
+    await db.deleteChapter(id);
     res.json({ success: true });
   } catch (error) {
     res.status(500).json({ error: error.message });
@@ -249,15 +260,14 @@ app.delete('/api/chapters/:id', async (req, res) => {
 app.get('/api/chapters/:chapterId/stream', async (req, res) => {
   const { chapterId } = req.params;
   try {
-    const chapter = await db.get('SELECT * FROM chapters WHERE id = ?', [chapterId]);
+    const chapter = await db.getChapter(chapterId);
     if (!chapter) return res.status(404).end();
-    const title = await db.get('SELECT client_id FROM titles WHERE id = ?', [chapter.title_id]);
-    if (!title || title.client_id !== req.clientId) return res.status(403).end();
-    
+    const title = await db.getTitle(chapter.title_id, req.clientId);
+    if (!title) return res.status(403).end();
     
     const startIndex = parseInt(req.query.offset || 0);
     debugLog(`Streaming ${chapterId} starting from offset ${startIndex}`);
-    const sections = await db.all('SELECT * FROM chapter_sections WHERE chapter_id = ? AND section_index >= ? ORDER BY section_index ASC', [chapterId, startIndex]);
+    const sections = await db.getSections(chapterId, startIndex);
     debugLog(`Found ${sections.length} sections for offset ${startIndex}`);
     if (sections.length === 0) {
        debugLog(`No sections found for ${chapterId} with offset ${startIndex}. Chapter likely has fewer sections.`);
@@ -309,7 +319,7 @@ app.get('/api/chapters/:chapterId/stream', async (req, res) => {
           audioBuffer = response.audioContent;
           
           fs.writeFileSync(localPath, audioBuffer);
-          await db.run('UPDATE chapter_sections SET status = ?, audio_file_path = ? WHERE id = ?', ['generated', localPath, section.id]);
+          await db.updateSection(section.id, { status: 'generated', audio_file_path: localPath });
           res.write(audioBuffer);
         } catch (e) {
           debugLog(`Error generating audio: ${e.message}`);
