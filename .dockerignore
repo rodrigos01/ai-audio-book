@@ -1,0 +1,17 @@
+node_modules/
+dist/
+build/
+.git/
+.env
+*.json
+!package.json
+!package-lock.json
+audio_files/
+samples/
+storage/
+*.log
+backend/database.json
+backend/audio_files/
+backend/samples/
+backend/ai-audio-book-36*.json
+!backend/ai-audio-book-key.json

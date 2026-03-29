@@ -1,0 +1,11 @@
+.gcloudignore
+.git/
+.gitignore
+**/node_modules/
+**/dist/
+**/.env
+**/*.log
+backend/debug.log
+backend/database.json
+backend/audio_files/
+ai-audio-book-36e0611138d4.json

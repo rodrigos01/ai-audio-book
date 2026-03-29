@@ -1,0 +1,28 @@
+# Node dependencies
+node_modules/
+dist/
+build/
+
+# IDE/System
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+
+# Secrets & Config
+.env
+*.json
+!package.json
+!package-lock.json
+
+# Large Assets/Generated Files
+audio_files/
+samples/
+storage/
+*.log
+
+# Backend specific exclusions
+backend/database.json
+backend/audio_files/
+backend/samples/
+backend/ai-audio-book-*.json
