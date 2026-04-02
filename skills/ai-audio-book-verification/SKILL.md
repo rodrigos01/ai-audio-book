@@ -29,14 +29,11 @@ Execute the scripts in the `scripts/` directory:
 
 ### 3. Error Recognition & Troubleshooting
 
-#### Firestore Issues
-- **PERMISSION_DENIED**: The service account lacks `roles/datastore.user`.
-- **FAILED_PRECONDITION**: An index is missing. Check the URL in the error body.
-- **Chapter not found**: Occurs if the `chapters` or `chapter_sections` index is still building.
-
-#### Storage Issues
-- **ENOENT (No such file or directory)**: GCS FUSE mount has failed or the local storage path is incorrect.
-- **Audio failed to load**: Check browser devtools `Network` tab for 404/500 on `.mp3` segments.
+#### Troubleshooting Strategy
+If you encounter a blank screen, a persistent loading state, or any behavior that deviates from the expected flow:
+1.  **Capture Console Logs**: Immediately run `capture_browser_console_logs`.
+2.  **Screenshot**: Capture a screenshot to document the UI state.
+3.  **Report & End**: Do not attempt to fix or deeply diagnose the root cause if it requires code changes. Simply report the observed behavior and provide the logs/screenshots to the main agent, then end your session.
 
 ---
 

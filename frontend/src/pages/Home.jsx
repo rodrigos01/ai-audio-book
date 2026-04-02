@@ -1,6 +1,9 @@
 import { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { api } from '../lib/api';
+import { useAuth } from '../context/AuthContext';
+import { db } from '../lib/firebase';
+import { collection, query, where, onSnapshot, orderBy } from 'firebase/firestore';
 
 export default function Home() {
   const [titles, setTitles] = useState([]);
@@ -11,29 +14,44 @@ export default function Home() {
   const [deleteId, setDeleteId] = useState(null);
   
   const navigate = useNavigate();
+  const { user, getToken } = useAuth();
 
   useEffect(() => {
-    loadTitles();
-  }, []);
+    if (!user) return;
 
-  const loadTitles = async () => {
-    try {
-      const data = await api.getTitles();
+    setLoading(true);
+    const q = query(
+      collection(db, 'titles'),
+      where('owner_id', '==', `user:${user.uid}`)
+    );
+
+    const unsubscribe = onSnapshot(q, (snapshot) => {
+      const data = snapshot.docs.map(doc => ({
+        id: doc.id,
+        ...doc.data()
+      })).sort((a, b) => {
+        const dateA = a.created_at?.toDate ? a.created_at.toDate() : new Date(a.created_at || 0);
+        const dateB = b.created_at?.toDate ? b.created_at.toDate() : new Date(b.created_at || 0);
+        return dateB - dateA;
+      });
+      
       setTitles(data);
-    } catch (e) {
-      console.error(e);
-    } finally {
       setLoading(false);
-    }
-  };
+    }, (error) => {
+      console.error("Firestore Error:", error);
+      setLoading(false);
+    });
+
+    return unsubscribe;
+  }, [user]);
 
   const handleCreate = async (e) => {
     e.preventDefault();
     if (!newTitleName.trim()) return;
     try {
-      await api.createTitle(newTitleName);
+      const token = await getToken();
+      await api.createTitle(newTitleName, token);
       setNewTitleName('');
-      loadTitles();
     } catch (e) {
       console.error(e);
     }
@@ -42,9 +60,9 @@ export default function Home() {
   const handleRename = async (id) => {
     if (!editName.trim()) return;
     try {
-      await api.updateTitle(id, editName);
+      const token = await getToken();
+      await api.updateTitle(id, editName, token);
       setEditingId(null);
-      loadTitles();
     } catch (e) {
       console.error(e);
     }
@@ -52,9 +70,9 @@ export default function Home() {
 
   const handleDelete = async (id) => {
     try {
-      await api.deleteTitle(id);
+      const token = await getToken();
+      await api.deleteTitle(id, token);
       setDeleteId(null);
-      loadTitles();
     } catch (e) {
       console.error(e);
     }

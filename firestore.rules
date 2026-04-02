@@ -1,0 +1,41 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    
+    // Helper functions
+    function isSignedIn() {
+      return request.auth != null;
+    }
+    
+    function isOwner(data) {
+      return isSignedIn() && data.owner_id == "user:" + request.auth.uid;
+    }
+    
+    // Scoping for sub-resources
+    function ownsTitle(titleId) {
+      return isSignedIn() && get(/databases/$(database)/documents/titles/$(titleId)).data.owner_id == "user:" + request.auth.uid;
+    }
+
+    match /titles/{titleId} {
+      allow read: if isOwner(resource.data);
+      allow create: if isSignedIn();
+      allow update, delete: if isOwner(resource.data);
+    }
+    
+    match /chapters/{chapterId} {
+      // Read access requires owning the parent title
+      allow read: if ownsTitle(resource.data.title_id);
+      
+      // Only backend writes chapters (Admin SDK bypasses rules), 
+      // but we allow read for frontend queries.
+      allow write: if false; 
+    }
+    
+    match /chapter_sections/{sectionId} {
+      // Read access requires owning the parent title (lookup via chapter if title_id not present)
+      // For performance, we assume frontend queries by chapter_id
+      allow read: if isSignedIn() && ownsTitle(get(/databases/$(database)/documents/chapters/$(resource.data.chapter_id)).data.title_id);
+      allow write: if false;
+    }
+  }
+}

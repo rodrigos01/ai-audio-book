@@ -6,10 +6,14 @@ const fs = require('fs');
 const path = require('path');
 const FirestoreRepository = require('./firestore-repository');
 const db = new FirestoreRepository();
+const authMiddleware = require('./auth');
 const textToSpeech = require('@google-cloud/text-to-speech');
 
 const app = express();
 const PORT = process.env.PORT || 3005;
+
+// Basic health check - must be before any middleware that might hang
+app.get('/health', (req, res) => res.status(200).send('OK'));
 const STORAGE_BASE_PATH = path.resolve(process.env.STORAGE_BASE_PATH || __dirname);
 const audioDir = path.join(STORAGE_BASE_PATH, 'audio_files');
 const samplesDir = path.join(STORAGE_BASE_PATH, 'samples');
@@ -47,6 +51,25 @@ const allowedOrigins = [
   'http://localhost:5179', 'http://localhost:3005', 'http://localhost:3000'
 ];
 
+// Static assets should be served before CORS and Auth middleware
+const frontendDist = path.resolve(__dirname, '../frontend/dist');
+debugLog(`Serving frontend from: ${frontendDist}`);
+
+if (fs.existsSync(frontendDist)) {
+    app.use(express.static(frontendDist, {
+      setHeaders: (res, path) => {
+        if (path.endsWith('.css')) res.setHeader('Content-Type', 'text/css');
+        if (path.endsWith('.js')) res.setHeader('Content-Type', 'application/javascript');
+      }
+    }));
+} else {
+    debugLog(`Frontend dist not found at: ${frontendDist}`);
+}
+
+if (fs.existsSync(samplesDir)) {
+    app.use('/samples', express.static(samplesDir));
+}
+
 app.use(cors({
   origin: function (origin, callback) {
     if (!origin || allowedOrigins.indexOf(origin) !== -1 || process.env.NODE_ENV === 'production') {
@@ -61,6 +84,7 @@ app.use(cors({
 
 app.use(express.json({ limit: '5mb' }));
 app.use(cookieParser());
+app.use(authMiddleware);
 
 // Assign client_id cookie
 app.use((req, res, next) => {
@@ -121,32 +145,46 @@ app.get('/api/voices', (req, res) => {
   res.json(VOICES);
 });
 
-app.get('/api/titles', async (req, res) => {
+// app.get('/api/titles', async (req, res) => {
+//   try {
+//     const titles = await db.getTitles(req.clientId, req.userId);
+//     res.json(titles);
+//   } catch (error) {
+//     res.status(500).json({ error: error.message });
+//   }
+// });
+
+app.post('/api/titles', async (req, res) => {
+  const { name } = req.body;
+  const id = uuidv4();
   try {
-    const rows = await db.getTitles(req.clientId);
-    res.json(rows);
+    await db.createTitle({ 
+      id, 
+      name, 
+      client_id: req.clientId, 
+      user_id: req.userId 
+    });
+    res.json({ id, name });
   } catch (error) {
     res.status(500).json({ error: error.message });
   }
 });
 
-app.post('/api/titles', async (req, res) => {
-  const { name } = req.body;
-  if (!name) return res.status(400).json({ error: 'Name is required' });
-  const id = uuidv4();
-  try {
-    const title = await db.createTitle({ id, client_id: req.clientId, name });
-    res.json(title);
-  } catch (error) {
-    res.status(500).json({ error: error.message });
-  }
-});
+// app.get('/api/titles/:id', async (req, res) => {
+//   try {
+//     const title = await db.getTitle(req.params.id, req.clientId, req.userId);
+//     if (!title) return res.status(404).json({ error: 'Title not found' });
+//     res.json(title);
+//   } catch (error) {
+//     res.status(500).json({ error: error.message });
+//   }
+// });
 
 app.patch('/api/titles/:id', async (req, res) => {
   const { id } = req.params;
   const { name } = req.body;
   try {
-    const title = await db.getTitle(id, req.clientId);
+    const title = await db.getTitle(id, req.clientId, req.userId);
     if (!title) return res.status(404).json({ error: 'Title not found' });
     await db.updateTitle(id, { name });
     res.json({ id, name });
@@ -158,7 +196,7 @@ app.patch('/api/titles/:id', async (req, res) => {
 app.delete('/api/titles/:id', async (req, res) => {
   const { id } = req.params;
   try {
-    const title = await db.getTitle(id, req.clientId);
+    const title = await db.getTitle(id, req.clientId, req.userId);
     if (!title) return res.status(404).json({ error: 'Title not found' });
     await db.deleteTitle(id);
     res.json({ success: true });
@@ -167,22 +205,24 @@ app.delete('/api/titles/:id', async (req, res) => {
   }
 });
 
-app.get('/api/titles/:titleId/chapters', async (req, res) => {
-  const { titleId } = req.params;
-  try {
-    const rows = await db.getChapters(titleId);
-    res.json(rows);
-  } catch (error) {
-    res.status(500).json({ error: error.message });
-  }
-});
+// app.get('/api/titles/:titleId/chapters', async (req, res) => {
+//   const { titleId } = req.params;
+//   try {
+//     const rows = await db.getChapters(titleId);
+//     res.json(rows);
+//   } catch (error) {
+//     res.status(500).json({ error: error.message });
+//   }
+// });
 
-app.post('/api/titles/:titleId/chapters', async (req, res) => {
-  const { titleId } = req.params;
+app.post('/api/titles/:id/chapters', async (req, res) => {
+  const titleId = req.params.id;
   const { content, voice_id, name } = req.body;
+  
   if (!content) return res.status(400).json({ error: 'Content is required' });
+
   try {
-    const title = await db.getTitle(titleId, req.clientId);
+    const title = await db.getTitle(titleId, req.clientId, req.userId);
     if (!title) return res.status(404).json({ error: 'Title not found' });
 
     const maxOrder = await db.getMaxChapterOrder(titleId);
@@ -215,37 +255,36 @@ app.post('/api/titles/:titleId/chapters', async (req, res) => {
   }
 });
 
-app.get('/api/chapters/:id', async (req, res) => {
-  const { id } = req.params;
-  try {
-    const chapter = await db.getChapterWithTitle(id, req.clientId);
-    if (!chapter) return res.status(404).json({ error: 'Chapter not found' });
-    
-    // Fetch sections to calculate estimated duration
-    const sections = await db.getSections(id);
-    
-    let totalEstimatedDuration = 0;
-    const sectionsWithEstimates = sections.map((s, idx) => {
-      const sectionDuration = s.content.length / 8.1 + 0.5;
-      const startTime = totalEstimatedDuration;
-      totalEstimatedDuration += sectionDuration;
-      return {
-        id: s.id,
-        section_index: idx,
-        estimated_duration: sectionDuration,
-        estimated_start_time: startTime
-      };
-    });
-
-    res.json({
-      ...chapter,
-      estimated_duration_seconds: totalEstimatedDuration,
-      sections: sectionsWithEstimates
-    });
-  } catch (error) {
-    res.status(500).json({ error: error.message });
-  }
-});
+// app.get('/api/chapters/:id', async (req, res) => {
+//   try {
+//     const chapter = await db.getChapterWithTitle(req.params.id, req.clientId, req.userId);
+//     if (!chapter) return res.status(404).json({ error: 'Chapter not found' });
+//     
+//     // Fetch sections to calculate estimated duration
+//     const sections = await db.getSections(req.params.id);
+//     
+//     let totalEstimatedDuration = 0;
+//     const sectionsWithEstimates = sections.map((s, idx) => {
+//       const sectionDuration = s.content.length / 8.1 + 0.5;
+//       const startTime = totalEstimatedDuration;
+//       totalEstimatedDuration += sectionDuration;
+//       return {
+//         id: s.id,
+//         section_index: idx,
+//         estimated_duration: sectionDuration,
+//         estimated_start_time: startTime
+//       };
+//     });
+// 
+//     res.json({
+//       ...chapter,
+//       estimated_duration_seconds: totalEstimatedDuration,
+//       sections: sectionsWithEstimates
+//     });
+//   } catch (error) {
+//     res.status(500).json({ error: error.message });
+//   }
+// });
 
 app.delete('/api/chapters/:id', async (req, res) => {
   const { id } = req.params;
@@ -259,11 +298,19 @@ app.delete('/api/chapters/:id', async (req, res) => {
 
 app.get('/api/chapters/:chapterId/stream', async (req, res) => {
   const { chapterId } = req.params;
+  debugLog(`Stream Request for ${chapterId}: token_present=${!!req.query.token}, user_id=${req.userId}`);
+  
+  let isClosed = false;
+  req.on('close', () => { isClosed = true; });
+
   try {
     const chapter = await db.getChapter(chapterId);
     if (!chapter) return res.status(404).end();
-    const title = await db.getTitle(chapter.title_id, req.clientId);
-    if (!title) return res.status(403).end();
+    const title = await db.getTitle(chapter.title_id, req.clientId, req.userId);
+    if (!title) {
+      debugLog(`Stream Forbidden for ${chapterId}: clientId=${req.clientId}, userId=${req.userId}`);
+      return res.status(403).end();
+    }
     
     const startIndex = parseInt(req.query.offset || 0);
     debugLog(`Streaming ${chapterId} starting from offset ${startIndex}`);
@@ -282,6 +329,7 @@ app.get('/api/chapters/:chapterId/stream', async (req, res) => {
     const pauseBuffer = Buffer.concat(Array(15).fill(silentMp3));
 
     for (const section of sections) {
+      if (isClosed) break;
       const localPath = path.join(audioDir, `${section.id}.mp3`);
       
       let audioBuffer;
@@ -328,8 +376,17 @@ app.get('/api/chapters/:chapterId/stream', async (req, res) => {
     }
     res.end();
   } catch (error) {
-    console.error('Stream error:', error);
     res.end();
+  }
+});
+
+app.post('/api/auth/claim', async (req, res) => {
+  if (!req.userId) return res.status(401).json({ error: 'Must be logged in to claim books' });
+  try {
+    const count = await db.linkAnonymousBooks(req.clientId, req.userId);
+    res.json({ success: true, claimed_count: count });
+  } catch (error) {
+    res.status(500).json({ error: error.message });
   }
 });
 
@@ -338,8 +395,7 @@ if (fs.existsSync(samplesDir)) {
     app.use('/samples', express.static(samplesDir));
 }
 
-const frontendDist = path.join(__dirname, '../frontend/dist');
-app.use(express.static(frontendDist));
+// app.use(express.static(frontendDist));
 
 // Fallback to index.html for SPA
 app.use((req, res) => {

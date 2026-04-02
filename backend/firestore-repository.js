@@ -1,36 +1,55 @@
-const admin = require('firebase-admin');
+const admin = require('./firebase-config');
 const Repository = require('./repository');
 
 class FirestoreRepository extends Repository {
   constructor() {
     super();
-    if (!admin.apps.length) {
-      admin.initializeApp();
-    }
     this.db = admin.firestore();
   }
 
-  async getTitles(clientId) {
+  _getOwnerId(clientId, userId = null) {
+    if (userId) return `user:${userId}`;
+    return `client:${clientId}`;
+  }
+
+  async getTitles(clientId, userId = null) {
+    const ownerId = this._getOwnerId(clientId, userId);
     const snapshot = await this.db.collection('titles')
-      .where('client_id', '==', clientId)
-      .orderBy('created_at', 'desc')
+      .where('owner_id', '==', ownerId)
       .get();
-    return snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+    
+    return snapshot.docs
+      .map(doc => ({ id: doc.id, ...doc.data() }))
+      .sort((a, b) => {
+        const dateA = a.created_at?.toDate ? a.created_at.toDate() : new Date(a.created_at || 0);
+        const dateB = b.created_at?.toDate ? b.created_at.toDate() : new Date(b.created_at || 0);
+        return dateB - dateA;
+      });
   }
 
   async createTitle(title) {
-    await this.db.collection('titles').doc(title.id).set({
+    const ownerId = this._getOwnerId(title.client_id, title.user_id);
+    const data = {
       ...title,
+      owner_id: ownerId,
       created_at: admin.firestore.FieldValue.serverTimestamp()
-    });
+    };
+    // Cleanup old fields if present
+    delete data.user_id;
+    delete data.client_id;
+
+    await this.db.collection('titles').doc(title.id).set(data);
     return title;
   }
 
-  async getTitle(id, clientId) {
+  async getTitle(id, clientId, userId = null) {
     const doc = await this.db.collection('titles').doc(id).get();
     if (!doc.exists) return null;
     const data = doc.data();
-    if (clientId && data.client_id !== clientId) return null;
+    
+    const ownerId = this._getOwnerId(clientId, userId);
+    if (data.owner_id !== ownerId) return null;
+    
     return { id: doc.id, ...data };
   }
 
@@ -59,17 +78,20 @@ class FirestoreRepository extends Repository {
     return chapter;
   }
 
-  async getChapterWithTitle(id, clientId) {
+  async getChapterWithTitle(id, clientId, userId = null) {
     const doc = await this.db.collection('chapters').doc(id).get();
     if (!doc.exists) return null;
     const chapter = { id: doc.id, ...doc.data() };
     
-    // Check if client owns the title
+    // Check if client/user owns the title
     const titleDoc = await this.db.collection('titles').doc(chapter.title_id).get();
-    if (!titleDoc.exists || (clientId && titleDoc.data().client_id !== clientId)) {
-        return null;
-    }
-    return { ...chapter, title_name: titleDoc.data().name };
+    if (!titleDoc.exists) return null;
+    
+    const titleData = titleDoc.data();
+    const ownerId = this._getOwnerId(clientId, userId);
+    if (titleData.owner_id !== ownerId) return null;
+    
+    return { ...chapter, title_name: titleData.name };
   }
 
   async getChapter(id) {
@@ -112,6 +134,23 @@ class FirestoreRepository extends Repository {
 
   async updateSection(id, data) {
     await this.db.collection('chapter_sections').doc(id).update(data);
+  }
+
+  async linkAnonymousBooks(clientId, userId) {
+    const anonOwnerId = `client:${clientId}`;
+    const userOwnerId = `user:${userId}`;
+    
+    const snapshot = await this.db.collection('titles')
+      .where('owner_id', '==', anonOwnerId)
+      .get();
+      
+    const batch = this.db.batch();
+    snapshot.docs.forEach(doc => {
+      batch.update(doc.ref, { owner_id: userOwnerId });
+    });
+    
+    await batch.commit();
+    return snapshot.size;
   }
 }
 

@@ -2,6 +2,7 @@ import { BrowserRouter, Routes, Route } from 'react-router-dom';
 import Home from './pages/Home';
 import TitleDetail from './pages/TitleDetail';
 import Player from './pages/Player';
+import Login from './components/Login';
 
 function App() {
   return (
@@ -22,7 +23,9 @@ function App() {
           <md-icon style={{ color: 'var(--md-sys-color-primary)', fontSize: '28px' }}>
             <span className="material-symbols-outlined">auto_stories</span>
           </md-icon>
-          <h1 style={{ margin: 0, fontSize: '1.25rem', fontWeight: 500, letterSpacing: '0.5px' }}>AI Audio Book</h1>
+          <h1 style={{ margin: 0, fontSize: '1.25rem', fontWeight: 500, letterSpacing: '0.5px', flex: 1 }}>AI Audio Book</h1>
+          
+          <Login />
         </header>
 
         {/* Main Content */}

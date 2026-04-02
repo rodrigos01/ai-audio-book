@@ -1,11 +1,14 @@
-import { useEffect, useState, useRef } from 'react';
+import { useEffect, useState, useRef, useCallback } from 'react';
 import { useParams, Link } from 'react-router-dom';
 import { api } from '../lib/api';
+import { useAuth } from '../context/AuthContext';
+import { db } from '../lib/firebase';
+import { doc, collection, query, where, getDoc, getDocs, orderBy } from 'firebase/firestore';
 
 export default function Player() {
   const { chapterId } = useParams();
-  const streamUrl = api.getStreamUrl(chapterId);
   const audioRef = useRef(null);
+  const { user, getToken, loading: authLoading } = useAuth();
   
   const [isPlaying, setIsPlaying] = useState(false);
   const [duration, setDuration] = useState(0);
@@ -17,18 +20,71 @@ export default function Player() {
   const [chapter, setChapter] = useState(null);
   const [currentSectionIndex, setCurrentSectionIndex] = useState(0);
   const [seekToTime, setSeekToTime] = useState(null);
+  const [authToken, setAuthToken] = useState(null);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState(null);
+
+  const loadChapter = useCallback(async () => {
+    if (!user || !chapterId) return;
+    
+    try {
+      setLoading(true);
+      setError(null);
+      const token = await getToken();
+      setAuthToken(token);
+
+      // 1. Get Chapter
+      const chapterRef = doc(db, 'chapters', chapterId);
+      const chapterSnap = await getDoc(chapterRef);
+      
+      if (!chapterSnap.exists()) {
+        setError('Chapter not found');
+        return;
+      }
+      const chapterData = { id: chapterSnap.id, ...chapterSnap.data() };
+
+      // 2. Get Title (for title name and permission check)
+      const titleRef = doc(db, 'titles', chapterData.title_id);
+      const titleSnap = await getDoc(titleRef);
+      
+      if (!titleSnap.exists()) {
+          setError('Parent book not found');
+          return;
+      }
+      const titleData = titleSnap.data();
+
+      // 3. Get Sections
+      const q = query(
+        collection(db, 'chapter_sections'),
+        where('chapter_id', '==', chapterId),
+        orderBy('section_index', 'asc')
+      );
+      const sectionsSnap = await getDocs(q);
+      const sections = sectionsSnap.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+
+      setChapter({
+        ...chapterData,
+        title_name: titleData.name,
+        sections
+      });
+
+    } catch (e) {
+      console.error('Player error:', e);
+      if (e.code === 'permission-denied') {
+        setError('You do not have permission to listen to this chapter.');
+      } else {
+        setError('Failed to load player data.');
+      }
+    } finally {
+      setLoading(false);
+    }
+  }, [chapterId, getToken, user]);
 
   useEffect(() => {
-    const loadChapter = async () => {
-      try {
-        const data = await api.getChapter(chapterId);
-        setChapter(data);
-      } catch (e) {
-        console.error('Failed to load chapter info', e);
-      }
-    };
-    loadChapter();
-  }, [chapterId]);
+    if (!authLoading) {
+        loadChapter();
+    }
+  }, [loadChapter, authLoading]);
 
   useEffect(() => {
     const audio = audioRef.current;
@@ -42,6 +98,10 @@ export default function Player() {
     const onDurationChange = () => setDuration(audio.duration);
     const onWaiting = () => setIsBuffering(true);
     const onPlaying = () => setIsBuffering(false);
+    const onError = (e) => {
+      console.error('Audio element error:', audio.error);
+      setIsBuffering(false);
+    };
 
     audio.addEventListener('play', onPlay);
     audio.addEventListener('pause', onPause);
@@ -49,6 +109,7 @@ export default function Player() {
     audio.addEventListener('durationchange', onDurationChange);
     audio.addEventListener('waiting', onWaiting);
     audio.addEventListener('playing', onPlaying);
+    audio.addEventListener('error', onError);
 
     return () => {
       audio.removeEventListener('play', onPlay);
@@ -57,6 +118,7 @@ export default function Player() {
       audio.removeEventListener('durationchange', onDurationChange);
       audio.removeEventListener('waiting', onWaiting);
       audio.removeEventListener('playing', onPlaying);
+      audio.removeEventListener('error', onError);
     };
   }, [currentSectionIndex]);
 
@@ -183,6 +245,43 @@ export default function Player() {
     return `${mins}:${secs.toString().padStart(2, '0')}`;
   };
 
+  if (authLoading || (loading && !chapter && !error)) {
+    return (
+      <div className="flex-col items-center justify-center mt-20 gap-4">
+        <md-circular-progress indeterminate></md-circular-progress>
+        <span className="text-secondary">Loading player...</span>
+      </div>
+    );
+  }
+
+  if (error) {
+    return (
+      <div className="flex-col gap-8 mt-4 max-w-2xl mx-auto items-center">
+        <Link to="/" style={{ alignSelf: 'flex-start', display: 'inline-flex', alignItems: 'center', gap: '0.5rem', color: 'var(--md-sys-color-primary)', textDecoration: 'none' }}>
+            <md-icon><span className="material-symbols-outlined">arrow_back</span></md-icon>
+            <span style={{ fontWeight: 500 }}>Back to Library</span>
+        </Link>
+        <div style={{ 
+          width: '100%',
+          padding: '3rem 2rem', 
+          backgroundColor: 'var(--md-sys-color-error-container)', 
+          color: 'var(--md-sys-color-on-error-container)',
+          borderRadius: '2.5rem',
+          textAlign: 'center',
+          border: '1px solid var(--md-sys-color-error)',
+          boxShadow: '0 8px 24px rgba(0,0,0,0.2)'
+        }}>
+          <md-icon style={{ fontSize: '48px' }}><span className="material-symbols-outlined">error_outline</span></md-icon>
+          <h2 style={{ fontSize: '1.5rem', marginTop: '1.5rem', marginBottom: '0.5rem' }}>{error}</h2>
+          <p style={{ opacity: 0.8 }}>Please verify the link or your access permissions.</p>
+          <md-filled-button onClick={() => window.location.reload()} style={{ marginTop: '2rem' }}>
+            Try Again
+          </md-filled-button>
+        </div>
+      </div>
+    );
+  }
+
   return (
     <div className="flex-col gap-8 mt-4 max-w-2xl mx-auto pb-10">
       <Link to="/" style={{ display: 'inline-flex', alignItems: 'center', gap: '0.5rem', color: 'var(--md-sys-color-primary)', textDecoration: 'none' }}>
@@ -284,15 +383,17 @@ export default function Player() {
           </div>
         </div>
 
-        <audio 
-          ref={audioRef} 
-          key={`${chapterId}-${currentSectionIndex}`}
-          autoPlay 
-          preload="auto"
-          style={{ display: 'none' }}
-        >
-          <source src={api.getStreamUrl(chapterId, currentSectionIndex)} type="audio/mpeg" />
-        </audio>
+        {chapter && !loading && (
+          <audio 
+            ref={audioRef} 
+            key={`${chapterId}-${currentSectionIndex}-${authToken}`}
+            autoPlay 
+            preload="auto"
+            style={{ display: 'none' }}
+          >
+            <source src={api.getStreamUrl(chapterId, currentSectionIndex, authToken)} type="audio/mpeg" />
+          </audio>
+        )}
 
         <div style={{ 
           marginTop: '3.5rem', 
