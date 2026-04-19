@@ -16,7 +16,12 @@ The AI Audiobook app is a multi-service application:
 ## Verification Procedures
 
 ### 1. Manual User Flow (Local)
-1.  **Library Check**: Navigate to `http://localhost:3005/`. Verify initial loading state.
+
+**Before starting:**
+1. make the sure the backend is running: `cd /home/rodrigo/dev/node/ai-audio-book/backend && npm run dev`
+2. make the sure the frontend is running: `cd /home/rodrigo/dev/node/ai-audio-book/frontend && npm run dev`
+
+1.  **Library Check**: Navigate to the frontend url, which will be indicated in the "npm run" output. Verify initial loading state.
 2.  **Creation**: Use "Create Title" with a descriptive name.
 3.  **Chapters**: Click the book, fill in the "Add Chapter" form.
 4.  **Audio Generation**: Monitor "Generate Chapter Audio" request completion.

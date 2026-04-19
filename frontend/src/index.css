@@ -108,6 +108,33 @@ h3 { font-size: 1.125rem; }
   padding: 1.5rem;
 }
 
+/* Voice Grid Responsive Styling */
+.voice-description {
+  max-height: 0;
+  opacity: 0;
+  overflow: hidden;
+  transition: all 0.4s cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+.voice-description.expanded {
+  max-height: 200px;
+  opacity: 1;
+}
+
+@media (min-width: 1024px) {
+  .voice-description {
+    max-height: 200px !important;
+    opacity: 1 !important;
+    border-top: 1px solid var(--md-sys-color-outline-variant) !important;
+    margin-top: 0 !important;
+    padding-top: 0.5rem !important;
+  }
+  
+  .desktop-hide {
+    display: none !important;
+  }
+}
+
 /* Voice Grid */
 .voice-grid {
   display: grid;

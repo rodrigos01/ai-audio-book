@@ -20,9 +20,20 @@ export default function TitleDetail() {
   const [creating, setCreating] = useState(false);
   const [previewingId, setPreviewingId] = useState(null);
   const [deleteChapterId, setDeleteChapterId] = useState(null);
+  const [expandedVoiceId, setExpandedVoiceId] = useState(null);
+  const [filterGender, setFilterGender] = useState(null);
+  const [filterPersonality, setFilterPersonality] = useState(null);
   const [error, setError] = useState(null);
   
   const { user, getToken } = useAuth();
+
+  const filteredVoices = voices.filter(v => {
+    if (filterGender && v.gender !== filterGender) return false;
+    if (filterPersonality && v.personality !== filterPersonality) return false;
+    return true;
+  });
+
+  const personalityTags = [...new Set(voices.map(v => v.personality))].sort();
 
   useEffect(() => {
     if (!user || !id) return;
@@ -295,45 +306,119 @@ export default function TitleDetail() {
               ></md-outlined-text-field>
 
               <div className="flex-col gap-4">
-                <h3 style={{ fontSize: '1rem', color: 'var(--md-sys-color-on-surface)', fontWeight: 500, display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
-                  <md-icon><span className="material-symbols-outlined">record_voice_over</span></md-icon>
-                  Narrator Voice
-                </h3>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                    <h3 style={{ fontSize: '1rem', color: 'var(--md-sys-color-on-surface)', fontWeight: 500, display: 'flex', alignItems: 'center', gap: '0.5rem', margin: 0 }}>
+                        <md-icon><span className="material-symbols-outlined">record_voice_over</span></md-icon>
+                        Narrator Voice
+                    </h3>
+                    <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'center' }}>
+                         <span style={{ fontSize: '0.75rem', color: 'var(--md-sys-color-on-surface-variant)' }}>{filteredVoices.length} voices</span>
+                    </div>
+                </div>
+
+                <div className="flex-col gap-4" style={{ backgroundColor: 'var(--md-sys-color-surface-container-highest)', padding: '1rem', borderRadius: '1rem' }}>
+                    {/* Gender Filter */}
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '1rem' }}>
+                        <span style={{ fontSize: '0.8rem', fontWeight: 500, minWidth: '60px' }}>Gender:</span>
+                        <md-chip-set>
+                            <md-filter-chip 
+                                label="Male" 
+                                selected={filterGender === 'Male' || undefined}
+                                onClick={() => setFilterGender(filterGender === 'Male' ? null : 'Male')}
+                            ></md-filter-chip>
+                            <md-filter-chip 
+                                label="Female" 
+                                selected={filterGender === 'Female' || undefined}
+                                onClick={() => setFilterGender(filterGender === 'Female' ? null : 'Female')}
+                            ></md-filter-chip>
+                        </md-chip-set>
+                    </div>
+
+                    {/* Personality Filter */}
+                    <div style={{ display: 'flex', alignItems: 'flex-start', gap: '1rem' }}>
+                        <span style={{ fontSize: '0.8rem', fontWeight: 500, minWidth: '60px', marginTop: '8px' }}>Style:</span>
+                        <md-chip-set style={{ display: 'flex', flexWrap: 'wrap' }}>
+                            {personalityTags.map(tag => (
+                                <md-filter-chip 
+                                    key={tag}
+                                    label={tag}
+                                    selected={filterPersonality === tag || undefined}
+                                    onClick={() => setFilterPersonality(filterPersonality === tag ? null : tag)}
+                                ></md-filter-chip>
+                            ))}
+                        </md-chip-set>
+                    </div>
+                </div>
+
                 <div className="voice-grid">
-                  {voices.map((voice) => (
+                  {filteredVoices.map((voice) => (
                     <div 
                       key={voice.id}
-                      onClick={() => setSelectedVoice(voice.id)}
-                      style={{ 
-                        padding: '1.25rem', 
-                        borderRadius: '1.25rem', 
-                        cursor: 'pointer',
-                        display: 'flex',
-                        alignItems: 'center',
-                        justifyContent: 'space-between',
-                        border: '2px solid transparent',
-                        borderColor: selectedVoice === voice.id ? 'var(--md-sys-color-primary)' : 'var(--md-sys-color-outline-variant)',
-                        backgroundColor: selectedVoice === voice.id ? 'var(--md-sys-color-primary-container)' : 'var(--md-sys-color-surface-container-high)',
-                        transition: 'all 0.25s cubic-bezier(0.4, 0, 0.2, 1)'
-                      }}
+                      style={{ display: 'flex', flexDirection: 'column' }}
                     >
-                      <div className="flex-col gap-1">
-                        <span style={{ fontWeight: 600, fontSize: '0.95rem', color: selectedVoice === voice.id ? 'var(--md-sys-color-on-primary-container)' : 'var(--md-sys-color-on-surface)' }}>{voice.name}</span>
-                        <div className="flex-row gap-2">
-                          <span className="text-xs" style={{ padding: '2px 8px', borderRadius: '4px', backgroundColor: 'rgba(0,0,0,0.2)', color: 'var(--md-sys-color-on-surface-variant)' }}>{voice.gender}</span>
-                          <span className="text-xs" style={{ padding: '2px 8px', borderRadius: '4px', backgroundColor: 'rgba(0,0,0,0.2)', color: 'var(--md-sys-color-secondary)' }}>{voice.quality}</span>
+                      <div 
+                        onClick={() => setSelectedVoice(voice.id)}
+                        style={{ 
+                          padding: '1.25rem', 
+                          borderRadius: '1.25rem', 
+                          cursor: 'pointer',
+                          display: 'flex',
+                          alignItems: 'center',
+                          justifyContent: 'space-between',
+                          border: '2px solid transparent',
+                          borderColor: selectedVoice === voice.id ? 'var(--md-sys-color-primary)' : 'var(--md-sys-color-outline-variant)',
+                          backgroundColor: selectedVoice === voice.id ? 'var(--md-sys-color-primary-container)' : 'var(--md-sys-color-surface-container-high)',
+                          transition: 'all 0.25s cubic-bezier(0.4, 0, 0.2, 1)',
+                          zIndex: 1
+                        }}
+                      >
+                        <div className="flex-col gap-1">
+                          <span style={{ fontWeight: 600, fontSize: '0.95rem', color: selectedVoice === voice.id ? 'var(--md-sys-color-on-primary-container)' : 'var(--md-sys-color-on-surface)' }}>{voice.name}</span>
+                          <div className="flex-row gap-2">
+                            <span className="text-xs" style={{ padding: '2px 8px', borderRadius: '4px', backgroundColor: 'rgba(0,0,0,0.2)', color: 'var(--md-sys-color-on-surface-variant)' }}>{voice.gender}</span>
+                            <span className="text-xs" style={{ padding: '2px 8px', borderRadius: '4px', backgroundColor: 'rgba(0,0,0,0.2)', color: 'var(--md-sys-color-secondary)' }}>{voice.quality}</span>
+                            <span className="text-xs" style={{ padding: '2px 8px', borderRadius: '4px', backgroundColor: 'var(--md-sys-color-tertiary-container)', color: 'var(--md-sys-color-on-tertiary-container)' }}>{voice.personality}</span>
+                          </div>
+                        </div>
+                        <div style={{ display: 'flex', gap: '0.25rem' }}>
+                          <md-icon-button 
+                            className="desktop-hide"
+                            onClick={(e) => { e.stopPropagation(); setExpandedVoiceId(expandedVoiceId === voice.id ? null : voice.id); }}
+                            style={{'--md-icon-button-icon-color': selectedVoice === voice.id ? 'var(--md-sys-color-on-primary-container)' : 'var(--md-sys-color-primary)'}}
+                          >
+                            <md-icon>
+                              <span className="material-symbols-outlined">
+                                {expandedVoiceId === voice.id ? 'info' : 'info_outline'}
+                              </span>
+                            </md-icon>
+                          </md-icon-button>
+                          <md-icon-button 
+                            onClick={(e) => { e.stopPropagation(); handlePreviewVoice(voice); }}
+                            style={{'--md-icon-button-icon-color': selectedVoice === voice.id ? 'var(--md-sys-color-on-primary-container)' : 'var(--md-sys-color-primary)'}}
+                          >
+                            <md-icon>
+                              <span className="material-symbols-outlined">
+                                {previewingId === voice.id ? 'pause_circle' : 'play_circle'}
+                              </span>
+                            </md-icon>
+                          </md-icon-button>
                         </div>
                       </div>
-                      <md-icon-button 
-                        onClick={(e) => { e.stopPropagation(); handlePreviewVoice(voice); }}
-                        style={{'--md-icon-button-icon-color': selectedVoice === voice.id ? 'var(--md-sys-color-on-primary-container)' : 'var(--md-sys-color-primary)'}}
-                      >
-                        <md-icon>
-                          <span className="material-symbols-outlined">
-                            {previewingId === voice.id ? 'pause_circle' : 'play_circle'}
-                          </span>
-                        </md-icon>
-                      </md-icon-button>
+                      
+                      {/* Expandable Description Area */}
+                      <div className={`voice-description ${expandedVoiceId === voice.id ? 'expanded' : ''}`} style={{ 
+                        backgroundColor: 'var(--md-sys-color-surface-container-low)',
+                        borderBottomLeftRadius: '1.25rem',
+                        borderBottomRightRadius: '1.25rem',
+                        marginTop: '-0.75rem',
+                        paddingTop: '0.75rem',
+                        border: '1px solid var(--md-sys-color-outline-variant)',
+                        borderTop: 'none'
+                      }}>
+                        <div style={{ padding: '1rem', fontSize: '0.875rem', color: 'var(--md-sys-color-on-surface-variant)', fontStyle: 'italic', lineHeight: '1.4' }}>
+                          {voice.description}
+                        </div>
+                      </div>
                     </div>
                   ))}
                 </div>

@@ -135,13 +135,37 @@ function breakContentIntoSections(content) {
 // API Routes
 app.get('/api/voices', (req, res) => {
   const VOICES = [
-    { id: 'en-US-Chirp3-HD-Aoede', name: 'Aria (Female)', lang: 'en-US', gender: 'Female', quality: 'HD' },
-    { id: 'en-US-Chirp3-HD-Kore', name: 'Kore (Female)', lang: 'en-US', gender: 'Female', quality: 'HD' },
-    { id: 'en-US-Chirp3-HD-Leda', name: 'Leda (Female)', lang: 'en-US', gender: 'Female', quality: 'HD' },
-    { id: 'en-US-Chirp3-HD-Charon', name: 'Charon (Male)', lang: 'en-US', gender: 'Male', quality: 'HD' },
-    { id: 'en-US-Chirp3-HD-Fenrir', name: 'Finn (Male)', lang: 'en-US', gender: 'Male', quality: 'HD' },
-    { id: 'en-US-Chirp3-HD-Orus', name: 'Oscar (Male)', lang: 'en-US', gender: 'Male', quality: 'HD' }
-  ].map(v => ({ ...v, sampleUrl: `/samples/${v.id}.mp3` }));
+    { id: 'en-US-Chirp3-HD-Achernar', name: 'Ashley', gender: 'Female', quality: 'HD', description: 'Approachable and friendly; conveys mid-range enthusiasm.', personality: 'Friendly' },
+    { id: 'en-US-Chirp3-HD-Achird', name: 'Adam', gender: 'Male', quality: 'HD', description: 'Youthful and slightly breathy; possesses an inquisitive, modern quality.', personality: 'Modern' },
+    { id: 'en-US-Chirp3-HD-Algenib', name: 'Alex', gender: 'Male', quality: 'HD', description: 'Relaxed and casual; ideal for social media or informal scripts.', personality: 'Modern' },
+    { id: 'en-US-Chirp3-HD-Algieba', name: 'Albert', gender: 'Male', quality: 'HD', description: 'Gentle, unassuming, and patient; the "trustworthy friend" archetype.', personality: 'Calm' },
+    { id: 'en-US-Chirp3-HD-Alnilam', name: 'Alan', gender: 'Male', quality: 'HD', description: 'Steady, helpful, and reliable; sounds like a helpful colleague.', personality: 'Steady' },
+    { id: 'en-US-Chirp3-HD-Aoede', name: 'Aria', gender: 'Female', quality: 'HD', description: 'Warm, clear, and sophisticated; the gold standard for long-form narration.', personality: 'Clear' },
+    { id: 'en-US-Chirp3-HD-Autonoe', name: 'Audrey', gender: 'Female', quality: 'HD', description: 'Resonant and mature; conveys wisdom and institutional authority.', personality: 'Mature' },
+    { id: 'en-US-Chirp3-HD-Callirrhoe', name: 'Chloe', gender: 'Female', quality: 'HD', description: 'Direct and energetic; suited for business leaders or corporate training.', personality: 'Energetic' },
+    { id: 'en-US-Chirp3-HD-Charon', name: 'Charles', gender: 'Male', quality: 'HD', description: 'Deep, resonant, and cinematic; perfect for epic or villainous roles.', personality: 'Grave' },
+    { id: 'en-US-Chirp3-HD-Despina', name: 'Diana', gender: 'Female', quality: 'HD', description: 'Inviting and smooth with extreme clarity; a friendly, "host-like" vibe.', personality: 'Friendly' },
+    { id: 'en-US-Chirp3-HD-Enceladus', name: 'Edward', gender: 'Male', quality: 'HD', description: 'High-energy and enthusiastic; carries a "promo" or "announcer" feel.', personality: 'Energetic' },
+    { id: 'en-US-Chirp3-HD-Erinome', name: 'Erica', gender: 'Female', quality: 'HD', description: 'Measured, thoughtful, and intelligent; projects high composure.', personality: 'Steady' },
+    { id: 'en-US-Chirp3-HD-Fenrir', name: 'Finn', gender: 'Male', quality: 'HD', description: 'Rugged and gravelly; best for grizzled veterans or tough characters.', personality: 'Grave' },
+    { id: 'en-US-Chirp3-HD-Gacrux', name: 'Grace', gender: 'Female', quality: 'HD', description: 'Confident and energetic; great for athletic or active personas.', personality: 'Energetic' },
+    { id: 'en-US-Chirp3-HD-Iapetus', name: 'Isaac', gender: 'Male', quality: 'HD', description: 'Casual and relatable; possesses a relatable "guy-next-door" quality.', personality: 'Friendly' },
+    { id: 'en-US-Chirp3-HD-Kore', name: 'Katie', gender: 'Female', quality: 'HD', description: 'Bright and youthful; sounds like a young adult hero or student.', personality: 'Bright' },
+    { id: 'en-US-Chirp3-HD-Laomedeia', name: 'Laura', gender: 'Female', quality: 'HD', description: 'Intelligent and conversational; sounds like a curious podcast host.', personality: 'Clear' },
+    { id: 'en-US-Chirp3-HD-Leda', name: 'Linda', gender: 'Female', quality: 'HD', description: 'Soft, calm, and deliberate; sounds like a wise elder or mentor.', personality: 'Calm' },
+    { id: 'en-US-Chirp3-HD-Orus', name: 'Oscar', gender: 'Male', quality: 'HD', description: 'Steady, neutral, and academic; best for non-fiction or technical manuals.', personality: 'Steady' },
+    { id: 'en-US-Chirp3-HD-Puck', name: 'Peter', gender: 'Male', quality: 'HD', description: 'Energetic and raspy; perfect for eccentric or mischievous characters.', personality: 'Energetic' },
+    { id: 'en-US-Chirp3-HD-Pulcherrima', name: 'Penny', gender: 'Female', quality: 'HD', description: 'Extremely upbeat and bubbly; ideal for animation or high-energy ads.', personality: 'Bright' },
+    { id: 'en-US-Chirp3-HD-Rasalgethi', name: 'Robert', gender: 'Male', quality: 'HD', description: 'Formal and precise; sounds like a high-ranking official or a butler.', personality: 'Steady' },
+    { id: 'en-US-Chirp3-HD-Sadachbia', name: 'Sam', gender: 'Male', quality: 'HD', description: 'Calm, soft-spoken, and comforting; poetic or literary tone.', personality: 'Calm' },
+    { id: 'en-US-Chirp3-HD-Sadaltager', name: 'Simon', gender: 'Male', quality: 'HD', description: 'Deeply rhythmic and methodical; good for philosophical content.', personality: 'Steady' },
+    { id: 'en-US-Chirp3-HD-Schedar', name: 'Steve', gender: 'Male', quality: 'HD', description: 'Classic storyteller voice with a balanced and timeless cadence.', personality: 'Steady' },
+    { id: 'en-US-Chirp3-HD-Sulafat', name: 'Sarah', gender: 'Female', quality: 'HD', description: 'Persuasive and confident; has a slight activist or "salesperson" edge.', personality: 'Energetic' },
+    { id: 'en-US-Chirp3-HD-Umbriel', name: 'Victor', gender: 'Male', quality: 'HD', description: 'Dry, understated, and modern; effective for irony or gritty fiction.', personality: 'Modern' },
+    { id: 'en-US-Chirp3-HD-Vindemiatrix', name: 'Vanessa', gender: 'Female', quality: 'HD', description: 'Mature, calm, and subtly seductive; works well for mystery or noir.', personality: 'Mature' },
+    { id: 'en-US-Chirp3-HD-Zephyr', name: 'Zoe', gender: 'Female', quality: 'HD', description: 'Sharp, professional, and authoritative; a classic news anchor profile.', personality: 'Clear' },
+    { id: 'en-US-Chirp3-HD-Zubenelgenubi', name: 'Zach', gender: 'Male', quality: 'HD', description: 'Solid and reliable; a hardworking, "blue-collar" character archetype.', personality: 'Friendly' }
+  ].map(v => ({ ...v, lang: 'en-US', sampleUrl: `/samples/${v.id}.mp3` }));
   res.json(VOICES);
 });
 
