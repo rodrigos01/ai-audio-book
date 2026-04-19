@@ -1,6 +1,7 @@
 import { useEffect, useState, useCallback } from 'react';
 import { useParams, Link, useNavigate } from 'react-router-dom';
 import { api } from '../lib/api';
+import { openGooglePicker } from '../lib/googlePicker';
 import { useAuth } from '../context/AuthContext';
 import { db } from '../lib/firebase';
 import { doc, collection, query, where, onSnapshot, orderBy, getDoc } from 'firebase/firestore';
@@ -23,9 +24,12 @@ export default function TitleDetail() {
   const [expandedVoiceId, setExpandedVoiceId] = useState(null);
   const [filterGender, setFilterGender] = useState(null);
   const [filterPersonality, setFilterPersonality] = useState(null);
+  const [isChangingVoice, setIsChangingVoice] = useState(false);
+  const [linkedDoc, setLinkedDoc] = useState(null); // { id: string, title: string }
+  const [syncing, setSyncing] = useState(false);
   const [error, setError] = useState(null);
   
-  const { user, getToken } = useAuth();
+  const { user, googleAccessToken, getToken, loginWithGoogle } = useAuth();
 
   const filteredVoices = voices.filter(v => {
     if (filterGender && v.gender !== filterGender) return false;
@@ -113,19 +117,54 @@ export default function TitleDetail() {
     };
   };
 
+  const handleImportGoogleDoc = async () => {
+    try {
+      setError(null);
+      if (!googleAccessToken) {
+        // Simple way to refresh token: re-trigger sign in
+        await loginWithGoogle();
+        // State update might be delayed, so we might need to ask the user to click again if it fails
+        setError("Account re-authorized. Please click 'Import' again.");
+        return;
+      }
+      const doc = await openGooglePicker(googleAccessToken);
+      if (doc) {
+        setLinkedDoc(doc);
+        setChapterName(doc.title);
+      }
+    } catch (err) {
+      setError('Failed to open Google Picker. Please ensure popups are allowed and you are signed in.');
+    }
+  };
+
   const handleAddChapter = async (e) => {
     e.preventDefault();
-    if (!newContent.trim() || !selectedVoice) return;
+    if (!chapterName.trim()) return;
+    if (!linkedDoc && !newContent.trim()) return;
+    
     setCreating(true);
+    setError(null);
     try {
-      const token = await getToken();
-      await api.createChapter(id, newContent, selectedVoice, chapterName, token);
-      setNewContent('');
+      const firebaseToken = await getToken();
+      let finalContent = newContent;
+
+      if (linkedDoc) {
+        setSyncing(true);
+        const { content } = await api.fetchGoogleDoc(linkedDoc.id, googleAccessToken, firebaseToken);
+        finalContent = content;
+        setSyncing(false);
+      }
+
+      const voiceId = selectedVoice || voices[0]?.id;
+      await api.createChapter(id, finalContent, voiceId, chapterName, firebaseToken);
       setChapterName('');
-    } catch (e) {
-      console.error(e);
+      setNewContent('');
+      setLinkedDoc(null);
+    } catch (err) {
+      setError(err.message);
     } finally {
       setCreating(false);
+      setSyncing(false);
     }
   };
 
@@ -247,7 +286,7 @@ export default function TitleDetail() {
                         ) : (
                           <>
                             <div slot="headline" style={{ fontWeight: 500 }}>{chapter.name || `Chapter ${chapter.order_index}`}</div>
-                            <div slot="supporting-text">Added {new Date(chapter.created_at).toLocaleDateString()}</div>
+                            <div slot="supporting-text">Added {chapter.created_at?.toDate ? chapter.created_at.toDate().toLocaleDateString() : (chapter.created_at ? new Date(chapter.created_at).toLocaleDateString() : 'Just now')}</div>
                           </>
                         )}
 
@@ -284,26 +323,61 @@ export default function TitleDetail() {
           }}>
             <h2 style={{ fontSize: '1.25rem', color: 'var(--md-sys-color-on-surface)', fontWeight: 400, display: 'flex', alignItems: 'center', gap: '0.75rem' }}>
               <md-icon><span className="material-symbols-outlined">add_circle</span></md-icon>
-              Generate New Chapter
+      Generate New Chapter
             </h2>
 
             <form onSubmit={handleAddChapter} className="flex-col gap-6">
-              <md-outlined-text-field
-                label="Chapter Name (Optional)"
-                placeholder="e.g. Introduction"
-                value={chapterName}
-                onInput={(e) => setChapterName(e.target.value)}
-              ></md-outlined-text-field>
+              <div style={{ display: 'flex', gap: '1rem', alignItems: 'center' }}>
+                <md-outlined-text-field
+                  label="Chapter Name"
+                  value={chapterName}
+                  onInput={(e) => setChapterName(e.target.value)}
+                  style={{ flex: 1 }}
+                ></md-outlined-text-field>
+                {user && !user.isAnonymous && (
+                  <md-filled-button 
+                    onClick={handleImportGoogleDoc}
+                    style={{ '--md-filled-button-container-color': 'var(--md-sys-color-tertiary)' }}
+                  >
+                    <md-icon slot="icon"><span className="material-symbols-outlined">cloud_download</span></md-icon>
+                    Import
+                  </md-filled-button>
+                )}
+              </div>
 
-              <md-outlined-text-field
-                type="textarea"
-                label="Narrative Content"
-                placeholder="Paste your story or text here..."
-                rows="12"
-                value={newContent}
-                onInput={(e) => setNewContent(e.target.value)}
-                style={{ width: '100%' }}
-              ></md-outlined-text-field>
+              {linkedDoc ? (
+                <div style={{ 
+                  padding: '1.5rem', 
+                  borderRadius: '1.25rem', 
+                  backgroundColor: 'var(--md-sys-color-secondary-container)',
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'space-between',
+                  border: '1px solid var(--md-sys-color-outline-variant)'
+                }}>
+                  <div className="flex-row gap-3" style={{ alignItems: 'center' }}>
+                    <md-icon><span className="material-symbols-outlined" style={{ fontSize: '2rem', color: 'var(--md-sys-color-on-secondary-container)' }}>description</span></md-icon>
+                    <div className="flex-col">
+                      <span style={{ fontWeight: 600, color: 'var(--md-sys-color-on-secondary-container)' }}>{linkedDoc.title}</span>
+                      <span className="text-xs" style={{ color: 'var(--md-sys-color-on-secondary-container)', opacity: 0.8 }}>
+                        {syncing ? 'Syncing content...' : 'Content will be fetched from Google Docs'}
+                      </span>
+                    </div>
+                  </div>
+                  <md-icon-button onClick={() => setLinkedDoc(null)}>
+                    <md-icon><span className="material-symbols-outlined">close</span></md-icon>
+                  </md-icon-button>
+                </div>
+              ) : (
+                <md-outlined-text-field
+                  label="Chapter Content"
+                  type="textarea"
+                  rows="10"
+                  value={newContent}
+                  onInput={(e) => setNewContent(e.target.value)}
+                  style={{ width: '100%' }}
+                ></md-outlined-text-field>
+              )}
 
               <div className="flex-col gap-4">
                 <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
@@ -311,127 +385,180 @@ export default function TitleDetail() {
                         <md-icon><span className="material-symbols-outlined">record_voice_over</span></md-icon>
                         Narrator Voice
                     </h3>
-                    <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'center' }}>
-                         <span style={{ fontSize: '0.75rem', color: 'var(--md-sys-color-on-surface-variant)' }}>{filteredVoices.length} voices</span>
-                    </div>
                 </div>
 
-                <div className="flex-col gap-4" style={{ backgroundColor: 'var(--md-sys-color-surface-container-highest)', padding: '1rem', borderRadius: '1rem' }}>
-                    {/* Gender Filter */}
-                    <div style={{ display: 'flex', alignItems: 'center', gap: '1rem' }}>
-                        <span style={{ fontSize: '0.8rem', fontWeight: 500, minWidth: '60px' }}>Gender:</span>
-                        <md-chip-set>
-                            <md-filter-chip 
-                                label="Male" 
-                                selected={filterGender === 'Male' || undefined}
-                                onClick={() => setFilterGender(filterGender === 'Male' ? null : 'Male')}
-                            ></md-filter-chip>
-                            <md-filter-chip 
-                                label="Female" 
-                                selected={filterGender === 'Female' || undefined}
-                                onClick={() => setFilterGender(filterGender === 'Female' ? null : 'Female')}
-                            ></md-filter-chip>
-                        </md-chip-set>
+                {!isChangingVoice && selectedVoice ? (
+                  <div style={{ 
+                    padding: '1.25rem', 
+                    borderRadius: '1.25rem', 
+                    backgroundColor: 'var(--md-sys-color-surface-container-highest)',
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'space-between',
+                    border: '1px solid var(--md-sys-color-outline-variant)'
+                  }}>
+                    <div className="flex-row gap-4" style={{ alignItems: 'center' }}>
+                      <div style={{ 
+                        width: '48px', 
+                        height: '48px', 
+                        borderRadius: '12px', 
+                        backgroundColor: 'var(--md-sys-color-primary)', 
+                        display: 'flex', 
+                        alignItems: 'center', 
+                        justifyContent: 'center',
+                        color: 'var(--md-sys-color-on-primary)'
+                      }}>
+                        <md-icon><span className="material-symbols-outlined">person</span></md-icon>
+                      </div>
+                      <div className="flex-col">
+                        <span style={{ fontWeight: 600, color: 'var(--md-sys-color-on-surface)' }}>
+                          {voices.find(v => v.id === selectedVoice)?.name}
+                        </span>
+                        <div className="flex-row gap-2">
+                           <span className="text-xs" style={{ color: 'var(--md-sys-color-primary)' }}>{voices.find(v => v.id === selectedVoice)?.personality}</span>
+                           <span style={{ opacity: 0.3 }}>•</span>
+                           <span className="text-xs" style={{ color: 'var(--md-sys-color-on-surface-variant)' }}>{voices.find(v => v.id === selectedVoice)?.gender}</span>
+                        </div>
+                      </div>
                     </div>
-
-                    {/* Personality Filter */}
-                    <div style={{ display: 'flex', alignItems: 'flex-start', gap: '1rem' }}>
-                        <span style={{ fontSize: '0.8rem', fontWeight: 500, minWidth: '60px', marginTop: '8px' }}>Style:</span>
-                        <md-chip-set style={{ display: 'flex', flexWrap: 'wrap' }}>
-                            {personalityTags.map(tag => (
+                    <div className="flex-row gap-2">
+                      <md-icon-button onClick={() => handlePreviewVoice(voices.find(v => v.id === selectedVoice))}>
+                        <md-icon>
+                          <span className="material-symbols-outlined">
+                            {previewingId === selectedVoice ? 'pause_circle' : 'play_circle'}
+                          </span>
+                        </md-icon>
+                      </md-icon-button>
+                      <md-outlined-button onClick={() => setIsChangingVoice(true)}>
+                        Change
+                      </md-outlined-button>
+                    </div>
+                  </div>
+                ) : (
+                  <>
+                    <div className="flex-col gap-4" style={{ backgroundColor: 'var(--md-sys-color-surface-container-highest)', padding: '1rem', borderRadius: '1rem' }}>
+                        {/* Gender Filter */}
+                        <div style={{ display: 'flex', alignItems: 'center', gap: '1rem' }}>
+                            <span style={{ fontSize: '0.8rem', fontWeight: 500, minWidth: '60px' }}>Gender:</span>
+                            <md-chip-set>
                                 <md-filter-chip 
-                                    key={tag}
-                                    label={tag}
-                                    selected={filterPersonality === tag || undefined}
-                                    onClick={() => setFilterPersonality(filterPersonality === tag ? null : tag)}
+                                    label="Male" 
+                                    selected={filterGender === 'Male' || undefined}
+                                    onClick={() => setFilterGender(filterGender === 'Male' ? null : 'Male')}
                                 ></md-filter-chip>
-                            ))}
-                        </md-chip-set>
-                    </div>
-                </div>
+                                <md-filter-chip 
+                                    label="Female" 
+                                    selected={filterGender === 'Female' || undefined}
+                                    onClick={() => setFilterGender(filterGender === 'Female' ? null : 'Female')}
+                                ></md-filter-chip>
+                            </md-chip-set>
+                        </div>
 
-                <div className="voice-grid">
-                  {filteredVoices.map((voice) => (
-                    <div 
-                      key={voice.id}
-                      style={{ display: 'flex', flexDirection: 'column' }}
-                    >
-                      <div 
-                        onClick={() => setSelectedVoice(voice.id)}
-                        style={{ 
-                          padding: '1.25rem', 
-                          borderRadius: '1.25rem', 
-                          cursor: 'pointer',
-                          display: 'flex',
-                          alignItems: 'center',
-                          justifyContent: 'space-between',
-                          border: '2px solid transparent',
-                          borderColor: selectedVoice === voice.id ? 'var(--md-sys-color-primary)' : 'var(--md-sys-color-outline-variant)',
-                          backgroundColor: selectedVoice === voice.id ? 'var(--md-sys-color-primary-container)' : 'var(--md-sys-color-surface-container-high)',
-                          transition: 'all 0.25s cubic-bezier(0.4, 0, 0.2, 1)',
-                          zIndex: 1
-                        }}
-                      >
-                        <div className="flex-col gap-1">
-                          <span style={{ fontWeight: 600, fontSize: '0.95rem', color: selectedVoice === voice.id ? 'var(--md-sys-color-on-primary-container)' : 'var(--md-sys-color-on-surface)' }}>{voice.name}</span>
-                          <div className="flex-row gap-2">
-                            <span className="text-xs" style={{ padding: '2px 8px', borderRadius: '4px', backgroundColor: 'rgba(0,0,0,0.2)', color: 'var(--md-sys-color-on-surface-variant)' }}>{voice.gender}</span>
-                            <span className="text-xs" style={{ padding: '2px 8px', borderRadius: '4px', backgroundColor: 'rgba(0,0,0,0.2)', color: 'var(--md-sys-color-secondary)' }}>{voice.quality}</span>
-                            <span className="text-xs" style={{ padding: '2px 8px', borderRadius: '4px', backgroundColor: 'var(--md-sys-color-tertiary-container)', color: 'var(--md-sys-color-on-tertiary-container)' }}>{voice.personality}</span>
+                        {/* Personality Filter */}
+                        <div style={{ display: 'flex', alignItems: 'flex-start', gap: '1rem' }}>
+                            <span style={{ fontSize: '0.8rem', fontWeight: 500, minWidth: '60px', marginTop: '8px' }}>Style:</span>
+                            <md-chip-set style={{ display: 'flex', flexWrap: 'wrap' }}>
+                                {personalityTags.map(tag => (
+                                    <md-filter-chip 
+                                        key={tag}
+                                        label={tag}
+                                        selected={filterPersonality === tag || undefined}
+                                        onClick={() => setFilterPersonality(filterPersonality === tag ? null : tag)}
+                                    ></md-filter-chip>
+                                ))}
+                            </md-chip-set>
+                        </div>
+                    </div>
+
+                    <div className="voice-grid">
+                      {filteredVoices.map((voice) => (
+                        <div 
+                          key={voice.id}
+                          style={{ display: 'flex', flexDirection: 'column' }}
+                        >
+                          <div 
+                            onClick={() => { setSelectedVoice(voice.id); setIsChangingVoice(false); }}
+                            style={{ 
+                              padding: '1.25rem', 
+                              borderRadius: '1.25rem', 
+                              cursor: 'pointer',
+                              display: 'flex',
+                              alignItems: 'center',
+                              justifyContent: 'space-between',
+                              border: '2px solid transparent',
+                              borderColor: selectedVoice === voice.id ? 'var(--md-sys-color-primary)' : 'var(--md-sys-color-outline-variant)',
+                              backgroundColor: selectedVoice === voice.id ? 'var(--md-sys-color-primary-container)' : 'var(--md-sys-color-surface-container-high)',
+                              transition: 'all 0.25s cubic-bezier(0.4, 0, 0.2, 1)',
+                              zIndex: 1
+                            }}
+                          >
+                            <div className="flex-col gap-1">
+                              <span style={{ fontWeight: 600, fontSize: '0.95rem', color: selectedVoice === voice.id ? 'var(--md-sys-color-on-primary-container)' : 'var(--md-sys-color-on-surface)' }}>{voice.name}</span>
+                              <div className="flex-row gap-2">
+                                <span className="text-xs" style={{ padding: '2px 8px', borderRadius: '4px', backgroundColor: 'rgba(0,0,0,0.2)', color: 'var(--md-sys-color-on-surface-variant)' }}>{voice.gender}</span>
+                                <span className="text-xs" style={{ padding: '2px 8px', borderRadius: '4px', backgroundColor: 'rgba(0,0,0,0.2)', color: 'var(--md-sys-color-secondary)' }}>{voice.quality}</span>
+                                <span className="text-xs" style={{ padding: '2px 8px', borderRadius: '4px', backgroundColor: 'var(--md-sys-color-tertiary-container)', color: 'var(--md-sys-color-on-tertiary-container)' }}>{voice.personality}</span>
+                              </div>
+                            </div>
+                            <div style={{ display: 'flex', gap: '0.25rem' }}>
+                              <md-icon-button 
+                                className="desktop-hide"
+                                onClick={(e) => { e.stopPropagation(); setExpandedVoiceId(expandedVoiceId === voice.id ? null : voice.id); }}
+                                style={{'--md-icon-button-icon-color': selectedVoice === voice.id ? 'var(--md-sys-color-on-primary-container)' : 'var(--md-sys-color-primary)'}}
+                              >
+                                <md-icon>
+                                  <span className="material-symbols-outlined">
+                                    {expandedVoiceId === voice.id ? 'info' : 'info_outline'}
+                                  </span>
+                                </md-icon>
+                              </md-icon-button>
+                              <md-icon-button 
+                                onClick={(e) => { e.stopPropagation(); handlePreviewVoice(voice); }}
+                                style={{'--md-icon-button-icon-color': selectedVoice === voice.id ? 'var(--md-sys-color-on-primary-container)' : 'var(--md-sys-color-primary)'}}
+                              >
+                                <md-icon>
+                                  <span className="material-symbols-outlined">
+                                    {previewingId === voice.id ? 'pause_circle' : 'play_circle'}
+                                  </span>
+                                </md-icon>
+                              </md-icon-button>
+                            </div>
+                          </div>
+                          
+                          {/* Expandable Description Area */}
+                          <div className={`voice-description ${expandedVoiceId === voice.id ? 'expanded' : ''}`} style={{ 
+                            backgroundColor: 'var(--md-sys-color-surface-container-low)',
+                            borderBottomLeftRadius: '1.25rem',
+                            borderBottomRightRadius: '1.25rem',
+                            marginTop: '-0.75rem',
+                            paddingTop: '0.75rem',
+                            border: '1px solid var(--md-sys-color-outline-variant)',
+                            borderTop: 'none'
+                          }}>
+                            <div style={{ padding: '1rem', fontSize: '0.875rem', color: 'var(--md-sys-color-on-surface-variant)', fontStyle: 'italic', lineHeight: '1.4' }}>
+                              {voice.description}
+                            </div>
                           </div>
                         </div>
-                        <div style={{ display: 'flex', gap: '0.25rem' }}>
-                          <md-icon-button 
-                            className="desktop-hide"
-                            onClick={(e) => { e.stopPropagation(); setExpandedVoiceId(expandedVoiceId === voice.id ? null : voice.id); }}
-                            style={{'--md-icon-button-icon-color': selectedVoice === voice.id ? 'var(--md-sys-color-on-primary-container)' : 'var(--md-sys-color-primary)'}}
-                          >
-                            <md-icon>
-                              <span className="material-symbols-outlined">
-                                {expandedVoiceId === voice.id ? 'info' : 'info_outline'}
-                              </span>
-                            </md-icon>
-                          </md-icon-button>
-                          <md-icon-button 
-                            onClick={(e) => { e.stopPropagation(); handlePreviewVoice(voice); }}
-                            style={{'--md-icon-button-icon-color': selectedVoice === voice.id ? 'var(--md-sys-color-on-primary-container)' : 'var(--md-sys-color-primary)'}}
-                          >
-                            <md-icon>
-                              <span className="material-symbols-outlined">
-                                {previewingId === voice.id ? 'pause_circle' : 'play_circle'}
-                              </span>
-                            </md-icon>
-                          </md-icon-button>
-                        </div>
-                      </div>
-                      
-                      {/* Expandable Description Area */}
-                      <div className={`voice-description ${expandedVoiceId === voice.id ? 'expanded' : ''}`} style={{ 
-                        backgroundColor: 'var(--md-sys-color-surface-container-low)',
-                        borderBottomLeftRadius: '1.25rem',
-                        borderBottomRightRadius: '1.25rem',
-                        marginTop: '-0.75rem',
-                        paddingTop: '0.75rem',
-                        border: '1px solid var(--md-sys-color-outline-variant)',
-                        borderTop: 'none'
-                      }}>
-                        <div style={{ padding: '1rem', fontSize: '0.875rem', color: 'var(--md-sys-color-on-surface-variant)', fontStyle: 'italic', lineHeight: '1.4' }}>
-                          {voice.description}
-                        </div>
-                      </div>
+                      ))}
                     </div>
-                  ))}
-                </div>
+                    {selectedVoice && (
+                      <md-text-button onClick={() => setIsChangingVoice(false)} style={{ alignSelf: 'center' }}>
+                         Keep Current Voice
+                      </md-text-button>
+                    )}
+                  </>
+                )}
               </div>
 
               <div className="flex-col gap-4" style={{ marginTop: '1rem' }}>
                 <md-filled-button 
                     type="submit" 
-                    disabled={!newContent.trim() || creating || !selectedVoice || undefined}
+                    disabled={!chapterName.trim() || (!newContent.trim() && !linkedDoc) || creating || !selectedVoice || undefined}
                     style={{ height: '56px', alignSelf: 'flex-end', minWidth: '280px', '--md-filled-button-container-shape': '16px' }}
                   >
                     <md-icon slot="icon"><span className="material-symbols-outlined">settings_suggest</span></md-icon>
-                    {creating ? 'Transcribing & Generating...' : 'Generate Chapter Audio'}
+                    {creating ? (syncing ? 'Fetching from Google Docs...' : 'Transcribing & Generating...') : 'Generate Chapter Audio'}
                   </md-filled-button>
                   
                   {creating && <md-linear-progress indeterminate style={{ width: '100%', borderRadius: '4px' }}></md-linear-progress>}

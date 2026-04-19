@@ -8,6 +8,7 @@ import { doc, collection, query, where, getDoc, getDocs, orderBy } from 'firebas
 export default function Player() {
   const { chapterId } = useParams();
   const audioRef = useRef(null);
+  const sliderRef = useRef(null);
   const { user, getToken, loading: authLoading } = useAuth();
   
   const [isPlaying, setIsPlaying] = useState(false);
@@ -23,6 +24,36 @@ export default function Player() {
   const [authToken, setAuthToken] = useState(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
+
+  const currentSection = chapter?.sections?.[currentSectionIndex];
+  const totalDuration = chapter?.estimated_duration_seconds || duration;
+  const displayCurrentTime = isScrubbing ? scrubTime : (currentSection?.estimated_start_time || 0) + currentTime;
+
+  const handleSeekTo = (targetTime) => {
+    if (!chapter?.sections) return;
+
+    // Find the section that covers the target time
+    let selectedSectionIndex = chapter.sections.findIndex((s, idx) => {
+      const nextSection = chapter.sections[idx + 1];
+      return targetTime >= s.estimated_start_time && (!nextSection || targetTime < nextSection.estimated_start_time);
+    });
+
+    if (selectedSectionIndex === -1) selectedSectionIndex = chapter.sections.length - 1;
+
+    const section = chapter.sections[selectedSectionIndex];
+    const timeWithinSection = targetTime - section.estimated_start_time;
+
+    if (selectedSectionIndex === currentSectionIndex) {
+      // Just seek within the current stream
+      if (audioRef.current) {
+        audioRef.current.currentTime = timeWithinSection;
+      }
+    } else {
+      // Remounting the audio element via key will trigger a fresh load
+      setSeekToTime(timeWithinSection);
+      setCurrentSectionIndex(selectedSectionIndex);
+    }
+  };
 
   const loadChapter = useCallback(async () => {
     if (!user || !chapterId) return;
@@ -62,10 +93,20 @@ export default function Player() {
       const sectionsSnap = await getDocs(q);
       const sections = sectionsSnap.docs.map(doc => ({ id: doc.id, ...doc.data() }));
 
+      // Calculate estimated duration & start times for each section
+      let totalEst = 0;
+      const sectionsWithTime = sections.map((s) => {
+        const est = (s.content?.length || 0) / 8.1 + 0.5;
+        const startTime = totalEst;
+        totalEst += est;
+        return { ...s, estimated_start_time: startTime, estimated_duration: est };
+      });
+
       setChapter({
         ...chapterData,
         title_name: titleData.name,
-        sections
+        sections: sectionsWithTime,
+        estimated_duration_seconds: totalEst
       });
 
     } catch (e) {
@@ -98,6 +139,14 @@ export default function Player() {
     const onDurationChange = () => setDuration(audio.duration);
     const onWaiting = () => setIsBuffering(true);
     const onPlaying = () => setIsBuffering(false);
+    const onEnded = () => {
+      if (chapter?.sections && currentSectionIndex < chapter.sections.length - 1) {
+        setCurrentSectionIndex(prev => prev + 1);
+        setCurrentTime(0);
+      } else {
+        setIsPlaying(false);
+      }
+    };
     const onError = (e) => {
       console.error('Audio element error:', audio.error);
       setIsBuffering(false);
@@ -109,6 +158,7 @@ export default function Player() {
     audio.addEventListener('durationchange', onDurationChange);
     audio.addEventListener('waiting', onWaiting);
     audio.addEventListener('playing', onPlaying);
+    audio.addEventListener('ended', onEnded);
     audio.addEventListener('error', onError);
 
     return () => {
@@ -118,9 +168,10 @@ export default function Player() {
       audio.removeEventListener('durationchange', onDurationChange);
       audio.removeEventListener('waiting', onWaiting);
       audio.removeEventListener('playing', onPlaying);
+      audio.removeEventListener('ended', onEnded);
       audio.removeEventListener('error', onError);
     };
-  }, [currentSectionIndex]);
+  }, [currentSectionIndex, chapter]);
 
   // Handle seeking to a specific time within a new stream
   useEffect(() => {
@@ -138,6 +189,13 @@ export default function Player() {
     audio.addEventListener('canplay', onCanPlay);
     return () => audio.removeEventListener('canplay', onCanPlay);
   }, [seekToTime]);
+
+  // Sync slider value
+  useEffect(() => {
+    if (sliderRef.current && !isScrubbing) {
+      sliderRef.current.value = displayCurrentTime;
+    }
+  }, [displayCurrentTime, isScrubbing]);
 
   // Media Session API for background playback and lock screen controls
   useEffect(() => {
@@ -190,35 +248,6 @@ export default function Player() {
     }
   };
 
-  const currentSection = chapter?.sections?.[currentSectionIndex];
-  const totalDuration = chapter?.estimated_duration_seconds || duration;
-  const displayCurrentTime = isScrubbing ? scrubTime : (currentSection?.estimated_start_time || 0) + currentTime;
-
-  const handleSeekTo = (targetTime) => {
-    if (!chapter?.sections) return;
-
-    // Find the section that covers the target time
-    let selectedSectionIndex = chapter.sections.findIndex((s, idx) => {
-      const nextSection = chapter.sections[idx + 1];
-      return targetTime >= s.estimated_start_time && (!nextSection || targetTime < nextSection.estimated_start_time);
-    });
-
-    if (selectedSectionIndex === -1) selectedSectionIndex = chapter.sections.length - 1;
-
-    const section = chapter.sections[selectedSectionIndex];
-    const timeWithinSection = targetTime - section.estimated_start_time;
-
-    if (selectedSectionIndex === currentSectionIndex) {
-      // Just seek within the current stream
-      if (audioRef.current) {
-        audioRef.current.currentTime = timeWithinSection;
-      }
-    } else {
-      // Remounting the audio element via key will trigger a fresh load
-      setSeekToTime(timeWithinSection);
-      setCurrentSectionIndex(selectedSectionIndex);
-    }
-  };
 
   const handleSliderInput = (e) => {
     setIsScrubbing(true);
@@ -330,6 +359,7 @@ export default function Player() {
           {/* Progress Slider */}
           <div className="flex-col gap-2 w-full">
             <md-slider
+              ref={sliderRef}
               min="0"
               max={totalDuration || 100}
               value={displayCurrentTime}

@@ -8,6 +8,7 @@ const FirestoreRepository = require('./firestore-repository');
 const db = new FirestoreRepository();
 const authMiddleware = require('./auth');
 const textToSpeech = require('@google-cloud/text-to-speech');
+const { google } = require('googleapis');
 
 const app = express();
 const PORT = process.env.PORT || 3005;
@@ -132,7 +133,65 @@ function breakContentIntoSections(content) {
   return sections;
 }
 
+// Google Docs Parser
+function extractTextFromGoogleDoc(doc) {
+  let fullText = '';
+  if (!doc.body || !doc.body.content) return '';
+  
+  doc.body.content.forEach((element) => {
+    if (element.paragraph) {
+      element.paragraph.elements.forEach((el) => {
+        if (el.textRun) {
+          fullText += el.textRun.content;
+        }
+      });
+    } else if (element.table) {
+      element.table.tableRows.forEach((row) => {
+        row.tableCells.forEach((cell) => {
+          cell.content.forEach((cellElement) => {
+            if (cellElement.paragraph) {
+              cellElement.paragraph.elements.forEach((el) => {
+                if (el.textRun) {
+                  fullText += el.textRun.content;
+                }
+              });
+            }
+          });
+          fullText += ' ';
+        });
+        fullText += '\n';
+      });
+    }
+  });
+  return fullText;
+}
+
 // API Routes
+app.post('/api/google-docs/fetch', async (req, res) => {
+  const { documentId, googleAccessToken } = req.body;
+  
+  if (!documentId || !googleAccessToken) {
+    return res.status(400).json({ error: 'documentId and googleAccessToken are required' });
+  }
+
+  try {
+    const auth = new google.auth.OAuth2();
+    auth.setCredentials({ access_token: googleAccessToken });
+    
+    const docs = google.docs({ version: 'v1', auth });
+    const response = await docs.documents.get({ documentId });
+    
+    const content = extractTextFromGoogleDoc(response.data);
+    res.json({
+      title: response.data.title,
+      content: content
+    });
+  } catch (error) {
+    console.error('Error fetching Google Doc:', error);
+    res.status(500).json({ error: 'Failed to fetch Google Document. Ensure the token is valid and you have access.' });
+  }
+});
+
 app.get('/api/voices', (req, res) => {
   const VOICES = [
     { id: 'en-US-Chirp3-HD-Achernar', name: 'Ashley', gender: 'Female', quality: 'HD', description: 'Approachable and friendly; conveys mid-range enthusiasm.', personality: 'Friendly' },

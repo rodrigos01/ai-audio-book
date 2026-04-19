@@ -162,7 +162,7 @@ export default function Home() {
                     ) : (
                       <>
                         <div slot="headline" style={{ fontWeight: 500 }}>{title.name}</div>
-                        <div slot="supporting-text">Created on {new Date(title.created_at).toLocaleDateString()}</div>
+                        <div slot="supporting-text">Created on {title.created_at?.toDate ? title.created_at.toDate().toLocaleDateString() : (title.created_at ? new Date(title.created_at).toLocaleDateString() : 'Just now')}</div>
                       </>
                     )}
 

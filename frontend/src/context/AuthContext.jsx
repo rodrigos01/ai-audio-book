@@ -1,5 +1,5 @@
 import React, { createContext, useContext, useEffect, useState } from 'react';
-import { onAuthStateChanged, signInWithPopup, signOut, signInWithEmailAndPassword, signInAnonymously } from 'firebase/auth';
+import { onAuthStateChanged, signInWithPopup, signOut, signInWithEmailAndPassword, signInAnonymously, GoogleAuthProvider } from 'firebase/auth';
 import { auth, googleProvider } from '../lib/firebase';
 import { api } from '../lib/api';
 
@@ -9,6 +9,7 @@ export const useAuth = () => useContext(AuthContext);
 
 export const AuthProvider = ({ children }) => {
   const [user, setUser] = useState(null);
+  const [googleAccessToken, setGoogleAccessToken] = useState(null);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
@@ -44,12 +45,29 @@ export const AuthProvider = ({ children }) => {
     }
   }, [user]);
 
-  const loginWithGoogle = () => signInWithPopup(auth, googleProvider);
+  const loginWithGoogle = async () => {
+    try {
+      const result = await signInWithPopup(auth, googleProvider);
+      const credential = GoogleAuthProvider.credentialFromResult(result);
+      if (credential) {
+        setGoogleAccessToken(credential.accessToken);
+      }
+      return result;
+    } catch (error) {
+      console.error('Google login error:', error);
+      throw error;
+    }
+  };
+
   const loginWithEmail = (email, password) => signInWithEmailAndPassword(auth, email, password);
-  const logout = () => signOut(auth);
+  const logout = () => {
+    setGoogleAccessToken(null);
+    return signOut(auth);
+  };
 
   const value = {
     user,
+    googleAccessToken,
     loading,
     loginWithGoogle,
     loginWithEmail,
