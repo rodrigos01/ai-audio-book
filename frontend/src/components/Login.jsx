@@ -20,25 +20,59 @@ const Login = () => {
 
   if (user && !user.isAnonymous) {
     return (
-      <div className="flex items-center gap-4">
+      <div style={{ display: 'flex', alignItems: 'center', gap: '1rem', animation: 'fadeIn 0.4s ease-out' }}>
         {user.photoURL ? (
           <img 
             src={user.photoURL} 
             alt={user.displayName} 
-            className="w-10 h-10 rounded-full border-2 border-indigo-100"
+            style={{ 
+                width: '40px', 
+                height: '40px', 
+                borderRadius: '50%', 
+                border: '2px solid var(--md-sys-color-primary-container)',
+                boxShadow: '0 2px 8px rgba(0,0,0,0.2)'
+            }}
           />
         ) : (
-          <div className="w-10 h-10 rounded-full bg-indigo-600 flex items-center justify-center text-white font-bold">
-            {user.email[0].toUpperCase()}
+          <div style={{ 
+              width: '40px', 
+              height: '40px', 
+              borderRadius: '50%', 
+              backgroundColor: 'var(--md-sys-color-primary)', 
+              color: 'var(--md-sys-color-on-primary)',
+              display: 'flex', 
+              alignItems: 'center', 
+              justifyContent: 'center', 
+              fontWeight: 'bold',
+              fontSize: '1.125rem'
+          }}>
+            {user.email?.[0].toUpperCase() || '?'}
           </div>
         )}
-        <div className="flex flex-col">
-          <span className="text-sm font-semibold text-gray-900 leading-none">
-            {user.displayName || user.email.split('@')[0]}
+        <div style={{ display: 'flex', flexDirection: 'column' }}>
+          <span style={{ 
+              fontSize: '0.875rem', 
+              fontWeight: 500, 
+              color: 'var(--md-sys-color-on-surface)',
+              marginBottom: '2px'
+          }}>
+            {user.displayName || user.email?.split('@')[0]}
           </span>
           <button
             onClick={logout}
-            className="text-xs text-red-500 hover:text-red-700 font-medium text-left"
+            style={{ 
+                background: 'none',
+                border: 'none',
+                padding: 0,
+                color: 'var(--md-sys-color-error)', 
+                fontSize: '0.75rem', 
+                fontWeight: 500, 
+                textAlign: 'left',
+                cursor: 'pointer',
+                opacity: 0.8
+            }}
+            onMouseOver={e => e.target.style.opacity = 1}
+            onMouseOut={e => e.target.style.opacity = 0.8}
           >
             Sign Out
           </button>
@@ -49,35 +83,50 @@ const Login = () => {
 
   if (showEmail) {
     return (
-      <form onSubmit={handleEmailLogin} className="flex items-center gap-2">
-        <input 
-          type="email" 
-          placeholder="Email" 
-          value={email} 
-          onChange={e => setEmail(e.target.value)}
-          className="px-2 py-1 text-sm border rounded"
-        />
-        <input 
-          type="password" 
-          placeholder="Password" 
-          value={password} 
-          onChange={e => setPassword(e.target.value)}
-          className="px-2 py-1 text-sm border rounded"
-        />
-        <button type="submit" className="bg-indigo-600 text-white px-3 py-1 rounded text-sm">Login</button>
-        <button type="button" onClick={() => setShowEmail(false)} className="text-xs text-gray-500">Back</button>
-        {error && <span className="text-xs text-red-500 absolute mt-12">{error}</span>}
+      <form onSubmit={handleEmailLogin} style={{ display: 'flex', alignItems: 'center', gap: '0.75rem', position: 'relative' }}>
+        <md-outlined-text-field
+          label="Email"
+          type="email"
+          value={email}
+          onInput={e => setEmail(e.target.value)}
+          style={{ height: '48px', '--md-outlined-text-field-container-shape': '12px' }}
+        ></md-outlined-text-field>
+        <md-outlined-text-field
+          label="Password"
+          type="password"
+          value={password}
+          onInput={e => setPassword(e.target.value)}
+          style={{ height: '48px', '--md-outlined-text-field-container-shape': '12px' }}
+        ></md-outlined-text-field>
+        
+        <md-filled-button type="submit">Login</md-filled-button>
+        
+        <md-outlined-icon-button type="button" onClick={() => setShowEmail(false)} style={{ '--md-outlined-icon-button-container-shape': '12px' }}>
+          <md-icon><span className="material-symbols-outlined">close</span></md-icon>
+        </md-outlined-icon-button>
+
+        {error && (
+            <div style={{ 
+                position: 'absolute', 
+                top: '52px', 
+                left: 0, 
+                color: 'var(--md-sys-color-error)', 
+                fontSize: '0.75rem',
+                backgroundColor: 'var(--md-sys-color-error-container)',
+                padding: '4px 8px',
+                borderRadius: '4px'
+            }}>
+                {error}
+            </div>
+        )}
       </form>
     );
   }
 
   return (
-    <div className="flex items-center gap-2">
-      <button
-        onClick={loginWithGoogle}
-        className="flex items-center gap-2 px-4 py-2 bg-white border border-gray-300 rounded-full shadow-sm hover:bg-gray-50 transition-all font-medium text-gray-700 text-sm"
-      >
-        <svg className="w-4 h-4" viewBox="0 0 24 24">
+    <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem' }}>
+      <md-outlined-button onClick={loginWithGoogle}>
+        <svg slot="icon" viewBox="0 0 24 24" style={{ width: '18px', height: '18px' }}>
           <path
             fill="#4285F4"
             d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.09z"
@@ -96,10 +145,12 @@ const Login = () => {
           />
         </svg>
         Sign in with Google
-      </button>
-      <button onClick={() => setShowEmail(true)} className="text-xs text-gray-500 hover:text-indigo-600 font-medium">
-        Email login
-      </button>
+      </md-outlined-button>
+      
+      <md-outlined-button onClick={() => setShowEmail(true)}>
+          <md-icon slot="icon"><span className="material-symbols-outlined">mail</span></md-icon>
+          Email Login
+      </md-outlined-button>
     </div>
   );
 };
