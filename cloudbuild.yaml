@@ -34,6 +34,39 @@ steps:
       - '--update-env-vars'
       - 'STORAGE_BASE_PATH=/app/storage,GOOGLE_APPLICATION_CREDENTIALS=/app/backend/ai-audio-book-key.json,NODE_ENV=production,GOOGLE_CLOUD_PROJECT=$PROJECT_ID'
 
+  # Step 5: Deploy Sample Generation Job
+  - name: 'gcr.io/cloud-builders/gcloud'
+    args:
+      - 'run'
+      - 'jobs'
+      - 'deploy'
+      - 'ai-audio-book-generate-samples'
+      - '--image'
+      - 'gcr.io/$PROJECT_ID/ai-audio-book'
+      - '--region'
+      - 'us-central1'
+      - '--command'
+      - 'node'
+      - '--args'
+      - 'scripts/generate_samples.js'
+      - '--add-volume'
+      - 'name=storage-volume,type=cloud-storage,bucket=ai-audio-book-storage-ai-audio-book'
+      - '--add-volume-mount'
+      - 'volume=storage-volume,mount-path=/app/storage'
+      - '--update-env-vars'
+      - 'STORAGE_BASE_PATH=/app/storage,GOOGLE_APPLICATION_CREDENTIALS=/app/backend/ai-audio-book-key.json,NODE_ENV=production,GOOGLE_CLOUD_PROJECT=$PROJECT_ID'
+
+  # Step 6: Execute Sample Generation Job
+  - name: 'gcr.io/cloud-builders/gcloud'
+    args:
+      - 'run'
+      - 'jobs'
+      - 'execute'
+      - 'ai-audio-book-generate-samples'
+      - '--region'
+      - 'us-central1'
+      - '--wait'
+
 options:
   logging: CLOUD_LOGGING_ONLY
 

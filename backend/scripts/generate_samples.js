@@ -3,17 +3,18 @@ const fs = require('fs');
 const path = require('path');
 
 async function generateSamples() {
-  const keyPath = path.join(__dirname, '../ai-audio-book-36e0611138d4.json');
+  const keyPath = process.env.GOOGLE_APPLICATION_CREDENTIALS || path.join(__dirname, '../ai-audio-book-key.json');
   let client;
   if (fs.existsSync(keyPath)) {
     client = new textToSpeech.TextToSpeechClient({ keyFilename: keyPath });
-    console.log('Using local key file for authentication');
+    console.log(`Using key file for authentication: ${keyPath}`);
   } else {
     client = new textToSpeech.TextToSpeechClient();
     console.log('Using Application Default Credentials');
   }
   
-  const samplesDir = path.join(__dirname, '../samples');
+  const STORAGE_BASE_PATH = path.resolve(process.env.STORAGE_BASE_PATH || path.join(__dirname, '..'));
+  const samplesDir = path.join(STORAGE_BASE_PATH, 'samples');
   if (!fs.existsSync(samplesDir)) {
     fs.mkdirSync(samplesDir, { recursive: true });
   }
