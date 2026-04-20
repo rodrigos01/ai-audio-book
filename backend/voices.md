@@ -1,31 +1,34 @@
-Voice,Gender,Description
-Achernar,Female,Approachable and friendly; conveys mid-range enthusiasm.
-Achird,Male,"Youthful and slightly breathy; possesses an inquisitive, modern quality."
-Algenib,Male,Relaxed and casual; ideal for social media or informal scripts.
-Algieba,Male,"Gentle, unassuming, and patient; the ""trustworthy friend"" archetype."
-Alnilam,Male,"Steady, helpful, and reliable; sounds like a helpful colleague."
-Aoede,Female,"Warm, clear, and sophisticated; the gold standard for long-form narration."
-Autonoe,Female,Resonant and mature; conveys wisdom and institutional authority.
-Callirrhoe,Female,Direct and energetic; suited for business leaders or corporate training.
-Charon,Male,"Deep, resonant, and cinematic; perfect for epic or villainous roles."
-Despina,Female,"Inviting and smooth with extreme clarity; a friendly, ""host-like"" vibe."
-Enceladus,Male,"High-energy and enthusiastic; carries a ""promo"" or ""announcer"" feel."
-Erinome,Female,"Measured, thoughtful, and intelligent; projects high composure."
-Fenrir,Male,Rugged and gravelly; best for grizzled veterans or tough characters.
-Gacrux,Female,Confident and energetic; great for athletic or active personas.
-Iapetus,Male,"Casual and relatable; possesses a relatable ""guy-next-door"" quality."
-Kore,Female,Bright and youthful; sounds like a young adult hero or student.
-Laomedeia,Female,Intelligent and conversational; sounds like a curious podcast host.
-Leda,Female,"Soft, calm, and deliberate; sounds like a wise elder or mentor."
-Orus,Male,"Steady, neutral, and academic; best for non-fiction or technical manuals."
-Puck,Male,Energetic and raspy; perfect for eccentric or mischievous characters.
-Pulcherrima,Female,Extremely upbeat and bubbly; ideal for animation or high-energy ads.
-Rasalgethi,Male,Formal and precise; sounds like a high-ranking official or a butler.
-Sadachbia,Male,"Calm, soft-spoken, and comforting; poetic or literary tone."
-Sadaltager,Male,Deeply rhythmic and methodical; good for philosophical content.
-Schedar,Male,Classic storyteller voice with a balanced and timeless cadence.
-Sulafat,Female,"Persuasive and confident; has a slight activist or ""salesperson"" edge."
-Umbriel,Male,"Dry, understated, and modern; effective for irony or gritty fiction."
-Vindemiatrix,Female,"Mature, calm, and subtly seductive; works well for mystery or noir."
-Zephyr,Female,"Sharp, professional, and authoritative; a classic news anchor profile."
-Zubenelgenubi,Male,"Solid and reliable; a hardworking, ""blue-collar"" character archetype."
+# Chirp 3-HD Voice Persona Table
+
+| Voice Name | Gender | Characteristics | Persona | Archetype | Best Matches |
+|---|---|---|---|---|---|
+| Achernar | Female | Gentle, intimate, reassuring | Patient guide; compassionate supporter | The Caregiver | Healthcare apps, meditation, empathetic service |
+| Aoede | Female | Airy, light, inspirationally expressive | Artistic storyteller; creative spirit | The Artist/Creator | Travel narrations, creative writing, lifestyle vlogs |
+| Autonoe | Female | Crisp, sharp, independent | Curious investigator; trailblazing scout | The Explorer | Education, scientific explainers, navigation |
+| Callirrhoe | Female | Relaxed, conversational, accessible | Reliable friend; helpful colleague | Everywoman | General virtual assistants, social apps |
+| Despina | Female | Polished, elegant, professional | Refined host; strategic advisor | The Diplomat/Lover | High-end retail, luxury brand bots |
+| Erinome | Female | Objective, precise, systematic | Dedicated researcher; unbiased reporter | The Sage | News delivery, technical docs, financial reports |
+| Gacrux | Female | Authoritative, seasoned, steady | Respected elder; senior executive | The Ruler/Matriarch | Legal disclosures, corporate training |
+| Kore | Female | Resolute, proactive, clear | Dedicated problem-solver; guardian | The Hero | Productivity tools, task management |
+| Laomedeia | Female | Optimistic, energetic, bright | Tireless cheerleader; hopeful student | The Innocent | Fitness coaching, youth educational games |
+| Leda | Female | Modern, stylish, vibrant | Trend-conscious influencer; storyteller | The Maiden/Muse | Fashion marketing, social media content |
+| Pulcherrima | Female | Direct, confident, persuasive | High-impact salesperson; bold advocate | The Challenger/Warrior | Sales presentations, call-to-action marketing |
+| Sulafat | Female | Welcoming, kind, emotionally resonant | Bedtime storyteller; nurturing mentor | The Nurturer | Parenting apps, children's audiobooks |
+| Vindemiatrix | Female | Patient, methodical, soft-spoken | Systematic guide; careful archivist | Caregiver/Sage | Museum tours, e-learning, public service |
+| Zephyr | Female | Agile, clear, universally intelligible | Quick-witted assistant; helpful herald | The Messenger | Smart home, search, weather/news updates |
+| Autonoe (Alt) | Female | Self-contained, autonomous | Independent sentinel | The Sentinel | Robotic interfaces, standalone AI devices |
+| Puck | Male | Playful, lively, entertaining | Comedic sidekick; entertainer | The Jester | Children's gaming, brand mascots |
+| Charon | Male | Authoritative, steady, trustworthy | Seasoned narrator; wise philosopher | The Sage/Guide | Documentaries, corporate podcasts |
+| Fenrir | Male | Strong, fierce, high-energy | Passionate commentator; protagonist | The Warrior | Sports broadcasting, gaming trailers |
+| Orus | Male | Decisive, regal, deeply wise | Legendary leader; venerable historian | Ruler/Wise Old Man | Historical narration, premium finance |
+| Achird | Male | Helpful, non-threatening, clear | Community leader; store manager | The Everyman | Customer service, local radio, non-profits |
+| Algenib | Male | Rugged, focused, experienced | Rugged specialist; world-weary traveler | The Outlaw | Automotive ads, outdoor gear, detective noir |
+| Algieba | Male | Professional, bright, hospitable | Luxury concierge; high-end rep | The Diplomat | Travel booking, banking, concierge bots |
+| Alnilam | Male | Assertive, structured, modern | High-impact manager; corporate trainer | The Ruler/Executive | Professional development, B2B sales |
+| Enceladus | Male | Meticulous, quiet, precise | Technical analyst; careful scientist | The Observer | Data analysis, scientific research |
+| Iapetus | Male | Versatile, articulate, transformational | Adaptable educator; narrator | The Magician | E-learning, complex narrative works |
+| Rasalgethi | Male | Intelligent, professional, contemporary | Tech consultant; software expert | The Consultant | IT tutorials, software explainers |
+| Sadachbia | Male | Animated, engaging, social | Enthusiastic host; event promoter | The Entertainer | Promotional videos, interactive voice ads |
+| Sadaltager | Male | Academic, expert, structured | University lecturer; subject expert | The Sage/Professor | Higher education, academic podcasts |
+| Schedar | Male | Balanced, steady, neutral | Reliable data source; neutral observer | The Sage (Neutral) | Weather reports, news tickers, utility alerts |
+| Umbriel | Male | Detached, mysterious, calm | Cool individualist; mysterious stranger | The Shadow/Rebel | Mystery audiobooks, noir, luxury "cool" |

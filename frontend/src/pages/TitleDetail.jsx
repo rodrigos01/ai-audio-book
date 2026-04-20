@@ -23,7 +23,7 @@ export default function TitleDetail() {
   const [deleteChapterId, setDeleteChapterId] = useState(null);
   const [expandedVoiceId, setExpandedVoiceId] = useState(null);
   const [filterGender, setFilterGender] = useState(null);
-  const [filterPersonality, setFilterPersonality] = useState(null);
+  const [filterStyle, setFilterStyle] = useState(null);
   const [isChangingVoice, setIsChangingVoice] = useState(false);
   const [linkedDoc, setLinkedDoc] = useState(null); // { id: string, title: string }
   const [syncing, setSyncing] = useState(false);
@@ -33,11 +33,11 @@ export default function TitleDetail() {
 
   const filteredVoices = voices.filter(v => {
     if (filterGender && v.gender !== filterGender) return false;
-    if (filterPersonality && v.personality !== filterPersonality) return false;
+    if (filterStyle && v.style !== filterStyle) return false;
     return true;
   });
 
-  const personalityTags = [...new Set(voices.map(v => v.personality))].sort();
+  const styleTags = [...new Set(voices.map(v => v.style))].sort();
 
   useEffect(() => {
     if (!user || !id) return;
@@ -415,7 +415,7 @@ export default function TitleDetail() {
                           {voices.find(v => v.id === selectedVoice)?.name}
                         </span>
                         <div className="flex-row gap-2">
-                           <span className="text-xs" style={{ color: 'var(--md-sys-color-primary)' }}>{voices.find(v => v.id === selectedVoice)?.personality}</span>
+                           <span className="text-xs" style={{ color: 'var(--md-sys-color-primary)' }}>{voices.find(v => v.id === selectedVoice)?.style}</span>
                            <span style={{ opacity: 0.3 }}>•</span>
                            <span className="text-xs" style={{ color: 'var(--md-sys-color-on-surface-variant)' }}>{voices.find(v => v.id === selectedVoice)?.gender}</span>
                         </div>
@@ -454,16 +454,16 @@ export default function TitleDetail() {
                             </md-chip-set>
                         </div>
 
-                        {/* Personality Filter */}
+                        {/* Style Filter */}
                         <div style={{ display: 'flex', alignItems: 'flex-start', gap: '1rem' }}>
                             <span style={{ fontSize: '0.8rem', fontWeight: 500, minWidth: '60px', marginTop: '8px' }}>Style:</span>
                             <md-chip-set style={{ display: 'flex', flexWrap: 'wrap' }}>
-                                {personalityTags.map(tag => (
+                                {styleTags.map(tag => (
                                     <md-filter-chip 
                                         key={tag}
                                         label={tag}
-                                        selected={filterPersonality === tag || undefined}
-                                        onClick={() => setFilterPersonality(filterPersonality === tag ? null : tag)}
+                                        selected={filterStyle === tag || undefined}
+                                        onClick={() => setFilterStyle(filterStyle === tag ? null : tag)}
                                     ></md-filter-chip>
                                 ))}
                             </md-chip-set>
@@ -497,7 +497,7 @@ export default function TitleDetail() {
                               <div className="flex-row gap-2">
                                 <span className="text-xs" style={{ padding: '2px 8px', borderRadius: '4px', backgroundColor: 'rgba(0,0,0,0.2)', color: 'var(--md-sys-color-on-surface-variant)' }}>{voice.gender}</span>
                                 <span className="text-xs" style={{ padding: '2px 8px', borderRadius: '4px', backgroundColor: 'rgba(0,0,0,0.2)', color: 'var(--md-sys-color-secondary)' }}>{voice.quality}</span>
-                                <span className="text-xs" style={{ padding: '2px 8px', borderRadius: '4px', backgroundColor: 'var(--md-sys-color-tertiary-container)', color: 'var(--md-sys-color-on-tertiary-container)' }}>{voice.personality}</span>
+                                <span className="text-xs" style={{ padding: '2px 8px', borderRadius: '4px', backgroundColor: 'var(--md-sys-color-tertiary-container)', color: 'var(--md-sys-color-on-tertiary-container)' }}>{voice.style}</span>
                               </div>
                             </div>
                             <div style={{ display: 'flex', gap: '0.25rem' }}>
@@ -535,8 +535,10 @@ export default function TitleDetail() {
                             border: '1px solid var(--md-sys-color-outline-variant)',
                             borderTop: 'none'
                           }}>
-                            <div style={{ padding: '1rem', fontSize: '0.875rem', color: 'var(--md-sys-color-on-surface-variant)', fontStyle: 'italic', lineHeight: '1.4' }}>
-                              {voice.description}
+                            <div style={{ padding: '1rem', fontSize: '0.875rem', color: 'var(--md-sys-color-on-surface-variant)', lineHeight: '1.4' }}>
+                                <div style={{ fontWeight: 600, color: 'var(--md-sys-color-primary)', marginBottom: '0.25rem' }}>{voice.archetype}</div>
+                                <div style={{ fontStyle: 'italic', marginBottom: '0.5rem' }}>"{voice.personality}"</div>
+                                <div style={{ opacity: 0.8 }}>{voice.description}</div>
                             </div>
                           </div>
                         </div>
