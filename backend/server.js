@@ -47,8 +47,8 @@ try {
 }
 
 const allowedOrigins = [
-  'http://localhost:5173', 'http://localhost:5174', 'http://localhost:5175', 
-  'http://localhost:5176', 'http://localhost:5177', 'http://localhost:5178', 
+  'http://localhost:5173', 'http://localhost:5174', 'http://localhost:5175',
+  'http://localhost:5176', 'http://localhost:5177', 'http://localhost:5178',
   'http://localhost:5179', 'http://localhost:3005', 'http://localhost:3000'
 ];
 
@@ -57,18 +57,18 @@ const frontendDist = path.resolve(__dirname, '../frontend/dist');
 debugLog(`Serving frontend from: ${frontendDist}`);
 
 if (fs.existsSync(frontendDist)) {
-    app.use(express.static(frontendDist, {
-      setHeaders: (res, path) => {
-        if (path.endsWith('.css')) res.setHeader('Content-Type', 'text/css');
-        if (path.endsWith('.js')) res.setHeader('Content-Type', 'application/javascript');
-      }
-    }));
+  app.use(express.static(frontendDist, {
+    setHeaders: (res, path) => {
+      if (path.endsWith('.css')) res.setHeader('Content-Type', 'text/css');
+      if (path.endsWith('.js')) res.setHeader('Content-Type', 'application/javascript');
+    }
+  }));
 } else {
-    debugLog(`Frontend dist not found at: ${frontendDist}`);
+  debugLog(`Frontend dist not found at: ${frontendDist}`);
 }
 
 if (fs.existsSync(samplesDir)) {
-    app.use('/samples', express.static(samplesDir));
+  app.use('/samples', express.static(samplesDir));
 }
 
 app.use(cors({
@@ -103,7 +103,7 @@ function breakContentIntoSections(content) {
   const paragraphs = content.split(/\r?\n\s*\r?\n/).map(s => s.trim()).filter(s => s.length > 0);
   const sections = [];
   const MAX_SECTION_LENGTH = 2000;
-  
+
   for (let p of paragraphs) {
     if (p.length <= MAX_SECTION_LENGTH) {
       sections.push(p);
@@ -137,7 +137,7 @@ function breakContentIntoSections(content) {
 function extractTextFromGoogleDoc(doc) {
   let fullText = '';
   if (!doc.body || !doc.body.content) return '';
-  
+
   doc.body.content.forEach((element) => {
     if (element.paragraph) {
       element.paragraph.elements.forEach((el) => {
@@ -169,7 +169,7 @@ function extractTextFromGoogleDoc(doc) {
 // API Routes
 app.post('/api/google-docs/fetch', async (req, res) => {
   const { documentId, googleAccessToken } = req.body;
-  
+
   if (!documentId || !googleAccessToken) {
     return res.status(400).json({ error: 'documentId and googleAccessToken are required' });
   }
@@ -177,10 +177,10 @@ app.post('/api/google-docs/fetch', async (req, res) => {
   try {
     const auth = new google.auth.OAuth2();
     auth.setCredentials({ access_token: googleAccessToken });
-    
+
     const docs = google.docs({ version: 'v1', auth });
     const response = await docs.documents.get({ documentId });
-    
+
     const content = extractTextFromGoogleDoc(response.data);
     res.json({
       title: response.data.title,
@@ -241,11 +241,11 @@ app.post('/api/titles', async (req, res) => {
   const { name } = req.body;
   const id = uuidv4();
   try {
-    await db.createTitle({ 
-      id, 
-      name, 
-      client_id: req.clientId, 
-      user_id: req.userId 
+    await db.createTitle({
+      id,
+      name,
+      client_id: req.clientId,
+      user_id: req.userId
     });
     res.json({ id, name });
   } catch (error) {
@@ -301,7 +301,7 @@ app.delete('/api/titles/:id', async (req, res) => {
 app.post('/api/titles/:id/chapters', async (req, res) => {
   const titleId = req.params.id;
   const { content, voice_id, name } = req.body;
-  
+
   if (!content) return res.status(400).json({ error: 'Content is required' });
 
   try {
@@ -313,13 +313,13 @@ app.post('/api/titles/:id/chapters', async (req, res) => {
     const voiceId = voice_id || 'en-US-Chirp3-HD-Aoede';
     const chapterId = uuidv4();
 
-    await db.createChapter({ 
-      id: chapterId, 
-      title_id: titleId, 
-      order_index: orderIndex, 
-      content, 
-      voice_id: voiceId, 
-      name: name || null 
+    await db.createChapter({
+      id: chapterId,
+      title_id: titleId,
+      order_index: orderIndex,
+      content,
+      voice_id: voiceId,
+      name: name || null
     });
 
     const sections = breakContentIntoSections(content);
@@ -382,7 +382,7 @@ app.delete('/api/chapters/:id', async (req, res) => {
 app.get('/api/chapters/:chapterId/stream', async (req, res) => {
   const { chapterId } = req.params;
   debugLog(`Stream Request for ${chapterId}: token_present=${!!req.query.token}, user_id=${req.userId}`);
-  
+
   let isClosed = false;
   req.on('close', () => { isClosed = true; });
 
@@ -394,16 +394,16 @@ app.get('/api/chapters/:chapterId/stream', async (req, res) => {
       debugLog(`Stream Forbidden for ${chapterId}: clientId=${req.clientId}, userId=${req.userId}`);
       return res.status(403).end();
     }
-    
+
     const startIndex = parseInt(req.query.offset || 0);
     debugLog(`Streaming ${chapterId} starting from offset ${startIndex}`);
     const sections = await db.getSections(chapterId, startIndex);
     debugLog(`Found ${sections.length} sections for offset ${startIndex}`);
     if (sections.length === 0) {
-       debugLog(`No sections found for ${chapterId} with offset ${startIndex}. Chapter likely has fewer sections.`);
-       return res.status(404).json({ error: 'Section offset out of bounds' });
+      debugLog(`No sections found for ${chapterId} with offset ${startIndex}. Chapter likely has fewer sections.`);
+      return res.status(404).json({ error: 'Section offset out of bounds' });
     }
-    
+
     res.setHeader('Content-Type', 'audio/mpeg');
 
     res.setHeader('Transfer-Encoding', 'chunked');
@@ -414,7 +414,7 @@ app.get('/api/chapters/:chapterId/stream', async (req, res) => {
     for (const section of sections) {
       if (isClosed) break;
       const localPath = path.join(audioDir, `${section.id}.mp3`);
-      
+
       let audioBuffer;
       let alreadyExists = false;
 
@@ -448,7 +448,7 @@ app.get('/api/chapters/:chapterId/stream', async (req, res) => {
           debugLog(`Generating audio for ${section.id}`);
           const [response] = await ttsClient.synthesizeSpeech(request);
           audioBuffer = response.audioContent;
-          
+
           fs.writeFileSync(localPath, audioBuffer);
           await db.updateSection(section.id, { status: 'generated', audio_file_path: localPath });
           res.write(audioBuffer);
@@ -475,7 +475,7 @@ app.post('/api/auth/claim', async (req, res) => {
 
 // Serve frontend samples and static app
 if (fs.existsSync(samplesDir)) {
-    app.use('/samples', express.static(samplesDir));
+  app.use('/samples', express.static(samplesDir));
 }
 
 // app.use(express.static(frontendDist));

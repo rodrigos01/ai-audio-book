@@ -1,4 +1,4 @@
-const CLIENT_ID = '883622140264-bvabb03s21b4vq0hul9jlo73f7h4vj5l.apps.googleusercontent.com';
+const CLIENT_ID = import.meta.env.VITE_GOOGLE_CLIENT_ID;
 const API_KEY = import.meta.env.VITE_FIREBASE_API_KEY;
 
 let pickerApiLoaded = false;
@@ -7,7 +7,7 @@ let pickerApiLoaded = false;
 export const loadPickerScripts = () => {
     return new Promise((resolve) => {
         if (pickerApiLoaded) return resolve();
-        
+
         // The scripts are already in index.html, we just need to wait for gapi to be ready
         const checkGapi = setInterval(() => {
             if (window.gapi && window.google) {
