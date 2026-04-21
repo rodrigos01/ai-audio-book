@@ -26,18 +26,28 @@ export const api = {
     if (!res.ok) throw new Error('Failed to fetch titles');
     return res.json();
   },
-  createTitle: async (name, token) => {
+  createTitle: async (name, aiCastingEnabled, token) => {
     const res = await fetch(`${API_BASE}/titles`, fetchOptions({
       method: 'POST',
-      body: JSON.stringify({ name })
+      body: JSON.stringify({ name, ai_casting_enabled: aiCastingEnabled })
     }, token));
     if (!res.ok) throw new Error('Failed to create title');
     return res.json();
   },
-  updateTitle: async (id, name, token) => {
+  castChapter: async (chapterId, token) => {
+    const res = await fetch(`${API_BASE}/chapters/${chapterId}/cast`, fetchOptions({
+      method: 'POST'
+    }, token));
+    if (!res.ok) {
+      const errorData = await res.json();
+      throw new Error(errorData.error || 'Failed to cast chapter');
+    }
+    return res.json();
+  },
+  updateTitle: async (id, data, token) => {
     const res = await fetch(`${API_BASE}/titles/${id}`, fetchOptions({
       method: 'PATCH',
-      body: JSON.stringify({ name })
+      body: JSON.stringify(data)
     }, token));
     if (!res.ok) throw new Error('Failed to update title');
     return res.json();
@@ -67,10 +77,10 @@ export const api = {
     if (!res.ok) throw new Error('Failed to create chapter');
     return res.json();
   },
-  updateChapter: async (id, name, token) => {
+  updateChapter: async (id, data, token) => {
     const res = await fetch(`${API_BASE}/chapters/${id}`, fetchOptions({
       method: 'PATCH',
-      body: JSON.stringify({ name })
+      body: JSON.stringify(data)
     }, token));
     if (!res.ok) throw new Error('Failed to update chapter');
     return res.json();

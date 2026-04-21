@@ -8,6 +8,7 @@ import { collection, query, where, onSnapshot, orderBy } from 'firebase/firestor
 export default function Home() {
   const [titles, setTitles] = useState([]);
   const [newTitleName, setNewTitleName] = useState('');
+  const [aiCastingEnabled, setAiCastingEnabled] = useState(false);
   const [loading, setLoading] = useState(true);
   const [editingId, setEditingId] = useState(null);
   const [editName, setEditName] = useState('');
@@ -50,8 +51,9 @@ export default function Home() {
     if (!newTitleName.trim()) return;
     try {
       const token = await getToken();
-      await api.createTitle(newTitleName, token);
+      await api.createTitle(newTitleName, aiCastingEnabled, token);
       setNewTitleName('');
+      setAiCastingEnabled(false);
     } catch (e) {
       console.error(e);
     }
@@ -61,7 +63,7 @@ export default function Home() {
     if (!editName.trim()) return;
     try {
       const token = await getToken();
-      await api.updateTitle(id, editName, token);
+      await api.updateTitle(id, { name: editName }, token);
       setEditingId(null);
     } catch (e) {
       console.error(e);
@@ -89,13 +91,32 @@ export default function Home() {
         border: '1px solid var(--md-sys-color-outline-variant)'
       }}>
         <h2 style={{ fontSize: '1.25rem', color: 'var(--md-sys-color-on-surface)', fontWeight: 400 }}>Create New Book</h2>
-        <form onSubmit={handleCreate} style={{ display: 'flex', gap: '1rem', alignItems: 'flex-end' }}>
+        <form onSubmit={handleCreate} style={{ display: 'flex', gap: '1.5rem', alignItems: 'center' }}>
           <md-filled-text-field
             label="Book Title"
             value={newTitleName}
             onInput={(e) => setNewTitleName(e.target.value)}
             style={{ flex: 1 }}
           ></md-filled-text-field>
+          
+          <div style={{ display: 'flex', alignItems: 'center', gap: '1.25rem', backgroundColor: 'var(--md-sys-color-surface-container-high)', padding: '0.5rem 1rem 0.5rem 0.75rem', borderRadius: '1rem', border: '1px solid var(--md-sys-color-outline-variant)' }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '0.25rem' }}>
+                  <span style={{ fontSize: '0.875rem', fontWeight: 500, color: 'var(--md-sys-color-on-surface)' }}>AI Casting</span>
+                  <div className="tooltip-parent">
+                    <md-icon-button style={{ '--md-icon-button-icon-size': '18px', width: '32px', height: '32px' }} type="button">
+                        <md-icon><span className="material-symbols-outlined" style={{ fontSize: '18px', opacity: 0.7 }}>info</span></md-icon>
+                    </md-icon-button>
+                    <div className="tooltip-box">
+                      Analyzes text to identify characters and assign consistent voices automatically.
+                    </div>
+                  </div>
+              </div>
+              <md-switch 
+                selected={aiCastingEnabled || undefined} 
+                onClick={() => setAiCastingEnabled(!aiCastingEnabled)}
+              ></md-switch>
+          </div>
+
           <md-filled-button type="submit" disabled={!newTitleName.trim() || undefined} style={{ height: '56px' }}>
             <md-icon slot="icon"><span className="material-symbols-outlined">add</span></md-icon>
             Create

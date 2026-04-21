@@ -100,6 +100,10 @@ class FirestoreRepository extends Repository {
     return { id: doc.id, ...doc.data() };
   }
 
+  async updateChapter(id, data) {
+    await this.db.collection('chapters').doc(id).update(data);
+  }
+
   async deleteChapter(id) {
     await this.db.collection('chapters').doc(id).delete();
   }

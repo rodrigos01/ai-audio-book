@@ -13,14 +13,17 @@
   "type": "commonjs",
   "dependencies": {
     "@google-cloud/text-to-speech": "^6.4.0",
-    "@google/generative-ai": "^0.24.1",
+    "@google/genai": "^1.50.1",
     "axios": "^1.13.6",
     "cookie-parser": "^1.4.7",
     "cors": "^2.8.6",
+    "dotenv": "^17.4.2",
     "express": "^5.2.1",
     "firebase-admin": "^13.7.0",
     "googleapis": "^171.4.0",
-    "uuid": "^13.0.0"
+    "uuid": "^13.0.0",
+    "zod": "^4.3.6",
+    "zod-to-json-schema": "^3.25.2"
   },
   "devDependencies": {
     "nodemon": "^3.1.14"

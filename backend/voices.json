@@ -1,0 +1,302 @@
+[
+  {
+    "id": "en-US-Chirp3-HD-Achernar",
+    "name": "Ashley",
+    "gender": "Female",
+    "quality": "HD",
+    "description": "Gentle, intimate, reassuring",
+    "personality": "Patient guide; compassionate supporter",
+    "style": "Empathetic",
+    "best_matches": "Healthcare apps, meditation, empathetic service"
+  },
+  {
+    "id": "en-US-Chirp3-HD-Aoede",
+    "name": "Aria",
+    "gender": "Female",
+    "quality": "HD",
+    "description": "Airy, light, inspirationally expressive",
+    "personality": "Artistic storyteller; creative spirit",
+    "style": "Expressive",
+    "best_matches": "Travel narrations, creative writing, lifestyle vlogs"
+  },
+  {
+    "id": "en-US-Chirp3-HD-Autonoe",
+    "name": "Audrey",
+    "gender": "Female",
+    "quality": "HD",
+    "description": "Crisp, sharp, independent",
+    "personality": "Curious investigator; trailblazing scout",
+    "style": "Analytical",
+    "best_matches": "Education, scientific explainers, navigation"
+  },
+  {
+    "id": "en-US-Chirp3-HD-Callirrhoe",
+    "name": "Chloe",
+    "gender": "Female",
+    "quality": "HD",
+    "description": "Relaxed, conversational, accessible",
+    "personality": "Reliable friend; helpful colleague",
+    "style": "Conversational",
+    "best_matches": "General virtual assistants, social apps"
+  },
+  {
+    "id": "en-US-Chirp3-HD-Despina",
+    "name": "Diana",
+    "gender": "Female",
+    "quality": "HD",
+    "description": "Polished, elegant, professional",
+    "personality": "Refined host; strategic advisor",
+    "style": "Authoritative",
+    "best_matches": "High-end retail, luxury brand bots"
+  },
+  {
+    "id": "en-US-Chirp3-HD-Erinome",
+    "name": "Erica",
+    "gender": "Female",
+    "quality": "HD",
+    "description": "Objective, precise, systematic",
+    "personality": "Dedicated researcher; unbiased reporter",
+    "style": "Analytical",
+    "best_matches": "News delivery, technical docs, financial reports"
+  },
+  {
+    "id": "en-US-Chirp3-HD-Gacrux",
+    "name": "Grace",
+    "gender": "Female",
+    "quality": "HD",
+    "description": "Authoritative, seasoned, steady",
+    "personality": "Respected elder; senior executive",
+    "style": "Authoritative",
+    "best_matches": "Legal disclosures, corporate training"
+  },
+  {
+    "id": "en-US-Chirp3-HD-Kore",
+    "name": "Katie",
+    "gender": "Female",
+    "quality": "HD",
+    "description": "Resolute, proactive, clear",
+    "personality": "Dedicated problem-solver; guardian",
+    "style": "Expressive",
+    "best_matches": "Productivity tools, task management"
+  },
+  {
+    "id": "en-US-Chirp3-HD-Laomedeia",
+    "name": "Laura",
+    "gender": "Female",
+    "quality": "HD",
+    "description": "Optimistic, energetic, bright",
+    "personality": "Tireless cheerleader; hopeful student",
+    "style": "Conversational",
+    "best_matches": "Fitness coaching, youth educational games"
+  },
+  {
+    "id": "en-US-Chirp3-HD-Leda",
+    "name": "Linda",
+    "gender": "Female",
+    "quality": "HD",
+    "description": "Modern, stylish, vibrant",
+    "personality": "Trend-conscious influencer; storyteller",
+    "style": "Expressive",
+    "best_matches": "Fashion marketing, social media content"
+  },
+  {
+    "id": "en-US-Chirp3-HD-Pulcherrima",
+    "name": "Penny",
+    "gender": "Female",
+    "quality": "HD",
+    "description": "Direct, confident, persuasive",
+    "personality": "High-impact salesperson; bold advocate",
+    "style": "Authoritative",
+    "best_matches": "Sales presentations, call-to-action marketing"
+  },
+  {
+    "id": "en-US-Chirp3-HD-Sulafat",
+    "name": "Sarah",
+    "gender": "Female",
+    "quality": "HD",
+    "description": "Welcoming, kind, emotionally resonant",
+    "personality": "Bedtime storyteller; nurturing mentor",
+    "style": "Empathetic",
+    "best_matches": "Parenting apps, children's audiobooks"
+  },
+  {
+    "id": "en-US-Chirp3-HD-Vindemiatrix",
+    "name": "Vanessa",
+    "gender": "Female",
+    "quality": "HD",
+    "description": "Patient, methodical, soft-spoken",
+    "personality": "Systematic guide; careful archivist",
+    "style": "Analytical",
+    "best_matches": "Museum tours, e-learning, public service"
+  },
+  {
+    "id": "en-US-Chirp3-HD-Zephyr",
+    "name": "Zoe",
+    "gender": "Female",
+    "quality": "HD",
+    "description": "Agile, clear, universally intelligible",
+    "personality": "Quick-witted assistant; helpful herald",
+    "style": "Analytical",
+    "best_matches": "Smart home, search, weather/news updates"
+  },
+  {
+    "id": "en-US-Chirp3-HD-Autonoe-Alt",
+    "name": "Aura",
+    "gender": "Female",
+    "quality": "HD",
+    "description": "Self-contained, autonomous",
+    "personality": "Independent sentinel",
+    "style": "Analytical",
+    "best_matches": "Robotic interfaces, standalone AI devices"
+  },
+  {
+    "id": "en-US-Chirp3-HD-Puck",
+    "name": "Peter",
+    "gender": "Male",
+    "quality": "HD",
+    "description": "Playful, lively, entertaining",
+    "personality": "Comedic sidekick; entertainer",
+    "style": "Expressive",
+    "best_matches": "Children's gaming, brand mascots"
+  },
+  {
+    "id": "en-US-Chirp3-HD-Charon",
+    "name": "Charles",
+    "gender": "Male",
+    "quality": "HD",
+    "description": "Authoritative, steady, trustworthy",
+    "personality": "Seasoned speaker; wise philosopher",
+    "style": "Authoritative",
+    "best_matches": "Documentaries, corporate podcasts"
+  },
+  {
+    "id": "en-US-Chirp3-HD-Fenrir",
+    "name": "Finn",
+    "gender": "Male",
+    "quality": "HD",
+    "description": "Strong, fierce, high-energy",
+    "personality": "Passionate commentator; protagonist",
+    "style": "Expressive",
+    "best_matches": "Sports broadcasting, gaming trailers"
+  },
+  {
+    "id": "en-US-Chirp3-HD-Orus",
+    "name": "Oscar",
+    "gender": "Male",
+    "quality": "HD",
+    "description": "Decisive, regal, deeply wise",
+    "personality": "Legendary leader; venerable historian",
+    "style": "Authoritative",
+    "best_matches": "Historical narration, premium finance"
+  },
+  {
+    "id": "en-US-Chirp3-HD-Achird",
+    "name": "Adam",
+    "gender": "Male",
+    "quality": "HD",
+    "description": "Helpful, non-threatening, clear",
+    "personality": "Community leader; store manager",
+    "style": "Conversational",
+    "best_matches": "Customer service, local radio, non-profits"
+  },
+  {
+    "id": "en-US-Chirp3-HD-Algenib",
+    "name": "Alex",
+    "gender": "Male",
+    "quality": "HD",
+    "description": "Rugged, focused, experienced",
+    "personality": "Rugged specialist; world-weary traveler",
+    "style": "Expressive",
+    "best_matches": "Automotive ads, outdoor gear, detective noir"
+  },
+  {
+    "id": "en-US-Chirp3-HD-Algieba",
+    "name": "Albert",
+    "gender": "Male",
+    "quality": "HD",
+    "description": "Professional, bright, hospitable",
+    "personality": "Luxury concierge; high-end rep",
+    "style": "Authoritative",
+    "best_matches": "Travel booking, banking, concierge bots"
+  },
+  {
+    "id": "en-US-Chirp3-HD-Alnilam",
+    "name": "Alan",
+    "gender": "Male",
+    "quality": "HD",
+    "description": "Assertive, structured, modern",
+    "personality": "High-impact manager; corporate trainer",
+    "style": "Authoritative",
+    "best_matches": "Professional development, B2B sales"
+  },
+  {
+    "id": "en-US-Chirp3-HD-Enceladus",
+    "name": "Edward",
+    "gender": "Male",
+    "quality": "HD",
+    "description": "Meticulous, quiet, precise",
+    "personality": "Technical analyst; careful scientist",
+    "style": "Analytical",
+    "best_matches": "Data analysis, scientific research"
+  },
+  {
+    "id": "en-US-Chirp3-HD-Iapetus",
+    "name": "Isaac",
+    "gender": "Male",
+    "quality": "HD",
+    "description": "Versatile, articulate, transformational",
+    "personality": "Adaptable educator; Speaker",
+    "style": "Expressive",
+    "best_matches": "E-learning, complex narrative works"
+  },
+  {
+    "id": "en-US-Chirp3-HD-Rasalgethi",
+    "name": "Robert",
+    "gender": "Male",
+    "quality": "HD",
+    "description": "Intelligent, professional, contemporary",
+    "personality": "Tech consultant; software expert",
+    "style": "Analytical",
+    "best_matches": "IT tutorials, software explainers"
+  },
+  {
+    "id": "en-US-Chirp3-HD-Sadachbia",
+    "name": "Sam",
+    "gender": "Male",
+    "quality": "HD",
+    "description": "Animated, engaging, social",
+    "personality": "Enthusiastic host; event promoter",
+    "style": "Conversational",
+    "best_matches": "Promotional videos, interactive voice ads"
+  },
+  {
+    "id": "en-US-Chirp3-HD-Sadaltager",
+    "name": "Simon",
+    "gender": "Male",
+    "quality": "HD",
+    "description": "Academic, expert, structured",
+    "personality": "University lecturer; subject expert",
+    "style": "Analytical",
+    "best_matches": "Higher education, academic podcasts"
+  },
+  {
+    "id": "en-US-Chirp3-HD-Schedar",
+    "name": "Steve",
+    "gender": "Male",
+    "quality": "HD",
+    "description": "Balanced, steady, neutral",
+    "personality": "Reliable data source; neutral observer",
+    "style": "Analytical",
+    "best_matches": "Weather reports, news tickers, utility alerts"
+  },
+  {
+    "id": "en-US-Chirp3-HD-Umbriel",
+    "name": "Victor",
+    "gender": "Male",
+    "quality": "HD",
+    "description": "Detached, mysterious, calm",
+    "personality": "Cool individualist; mysterious stranger",
+    "style": "Expressive",
+    "best_matches": "Mystery audiobooks, noir, luxury \"cool\""
+  }
+]

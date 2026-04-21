@@ -1,5 +1,6 @@
 {
   "dependencies": {
+    "@google/genai": "^1.50.1",
     "firebase-tools": "^15.12.0"
   }
 }

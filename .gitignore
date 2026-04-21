@@ -12,6 +12,7 @@ Thumbs.db
 # Secrets & Config
 .env
 *.json
+!voices.json
 !package.json
 !package-lock.json
 !firebase.json

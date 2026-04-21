@@ -1,3 +1,4 @@
+require('dotenv').config();
 const express = require('express');
 const cors = require('cors');
 const cookieParser = require('cookie-parser');
@@ -133,6 +134,40 @@ function breakContentIntoSections(content) {
   return sections;
 }
 
+async function deleteChapterSections(chapterId) {
+  try {
+    const sections = await db.getSections(chapterId);
+    if (sections.length === 0) return;
+
+    const admin = require('./firebase-config');
+    const batch = admin.firestore().batch();
+    
+    sections.forEach(s => {
+      // Delete from DB
+      batch.delete(admin.firestore().collection('chapter_sections').doc(s.id));
+      
+      // Delete from Disk
+      const audioPath = path.join(audioDir, `${s.id}.mp3`);
+      if (fs.existsSync(audioPath)) {
+        try { fs.unlinkSync(audioPath); } catch (e) { debugLog(`Error deleting file: ${e.message}`); }
+      }
+    });
+    
+    await batch.commit();
+    debugLog(`Cleaned up ${sections.length} sections for chapter ${chapterId}`);
+  } catch (e) {
+    debugLog(`Failed during section cleanup: ${e.message}`);
+  }
+}
+
+function splitSSMLIntoSections(ssml) {
+  // Strip outer <speak> if present
+  let clean = ssml.replace(/^<speak>\s*/i, '').replace(/\s*<\/speak>$/i, '');
+  // Split by </p>
+  const parts = clean.split(/<\/p>/i).map(p => p.trim()).filter(p => p.length > 0);
+  return parts.map(p => `<speak>${p}</p></speak>`);
+}
+
 // Google Docs Parser
 function extractTextFromGoogleDoc(doc) {
   let fullText = '';
@@ -187,17 +222,71 @@ app.post('/api/google-docs/fetch', async (req, res) => {
       content: content
     });
   } catch (error) {
-    console.error('Error fetching Google Doc:', error);
     res.status(500).json({ error: 'Failed to fetch Google Document. Ensure the token is valid and you have access.' });
+  }
+});
+
+const aiCasting = require('./ai-casting');
+
+app.post('/api/chapters/:chapterId/cast', authMiddleware, async (req, res) => {
+  const { chapterId } = req.params;
+  try {
+    const chapter = await db.getChapter(chapterId);
+    if (!chapter) return res.status(404).json({ error: 'Chapter not found' });
+
+    const title = await db.getTitle(chapter.title_id, req.clientId, req.userId);
+    if (!title) return res.status(403).json({ error: 'Forbidden' });
+
+    const VOICES = require('./voices.json');
+    const existingCast = title.casting_map || {};
+
+    debugLog(`AI Casting: Analyzing chapter ${chapterId} for ${title.name}`);
+    const result = await aiCasting.analyzeChapter(chapter.content, existingCast, VOICES);
+
+    // Update Title's casting map with any new characters
+    await db.updateTitle(title.id, {
+      casting_map: result.updated_cast
+    });
+
+    // Update Chapter with SSML content and flag
+    await db.updateChapter(chapterId, {
+      content: result.ssml,
+      is_ssml: true,
+      voice_id: result.narrator_voice,
+    });
+
+    // Also delete any existing sections because the content has changed
+    await deleteChapterSections(chapterId);
+
+    // Create new SSML sections
+    const ssmlSections = splitSSMLIntoSections(result.ssml);
+    const sectionData = ssmlSections.map((content, index) => ({
+      id: uuidv4(),
+      chapter_id: chapterId,
+      content,
+      section_index: index,
+      status: 'pending'
+    }));
+    await db.insertSections(sectionData);
+
+    res.json({
+      success: true,
+      casting_map: result.updated_cast,
+      ssml: result.ssml,
+      sections_count: sectionData.length
+    });
+  } catch (error) {
+    debugLog(`AI Casting Error: ${error.message}`);
+    res.status(500).json({ error: error.message });
   }
 });
 
 app.get('/api/voices', (req, res) => {
   const VOICES = require('./voices.json');
-  const enrichedVoices = VOICES.map(v => ({ 
-    ...v, 
-    lang: 'en-US', 
-    sampleUrl: `/samples/${v.id}.mp3` 
+  const enrichedVoices = VOICES.map(v => ({
+    ...v,
+    lang: 'en-US',
+    sampleUrl: `/samples/${v.id}.mp3`
   }));
   res.json(enrichedVoices);
 });
@@ -212,16 +301,19 @@ app.get('/api/voices', (req, res) => {
 // });
 
 app.post('/api/titles', async (req, res) => {
-  const { name } = req.body;
-  const id = uuidv4();
+  const { name, ai_casting_enabled } = req.body;
+  if (!name) return res.status(400).json({ error: 'Name is required' });
   try {
+    const id = uuidv4();
     await db.createTitle({
       id,
       name,
+      ai_casting_enabled: !!ai_casting_enabled,
+      casting_map: {},
       client_id: req.clientId,
       user_id: req.userId
     });
-    res.json({ id, name });
+    res.json({ id, name, ai_casting_enabled: !!ai_casting_enabled });
   } catch (error) {
     res.status(500).json({ error: error.message });
   }
@@ -237,14 +329,66 @@ app.post('/api/titles', async (req, res) => {
 //   }
 // });
 
-app.patch('/api/titles/:id', async (req, res) => {
+app.patch('/api/titles/:id', authMiddleware, async (req, res) => {
   const { id } = req.params;
-  const { name } = req.body;
+  const { name, casting_map } = req.body;
   try {
     const title = await db.getTitle(id, req.clientId, req.userId);
     if (!title) return res.status(404).json({ error: 'Title not found' });
-    await db.updateTitle(id, { name });
-    res.json({ id, name });
+    
+    const updateData = {};
+    if (name !== undefined) updateData.name = name;
+    if (casting_map !== undefined) updateData.casting_map = casting_map;
+
+    await db.updateTitle(id, updateData);
+
+    // If casting_map changed, propagate changes to all chapters
+    if (casting_map !== undefined) {
+      const oldMap = title.casting_map || {};
+      const newMap = casting_map;
+      
+      const changedCharacters = Object.keys(newMap).filter(char => oldMap[char] !== newMap[char]);
+      
+      if (changedCharacters.length > 0) {
+        debugLog(`Voice change detected for characters: ${changedCharacters.join(', ')}`);
+        const chapters = await db.getChapters(id);
+        for (const ch of chapters) {
+          if (ch.is_ssml) {
+            let updated = false;
+            let currentSSML = ch.content;
+            
+            changedCharacters.forEach(char => {
+              const oldVoice = oldMap[char];
+              const newVoice = newMap[char];
+              // Replace all occurrences of the old voice ID with the new one in the <voice> tag
+              if (oldVoice && currentSSML.includes(oldVoice)) {
+                currentSSML = currentSSML.replaceAll(oldVoice, newVoice);
+                updated = true;
+              }
+            });
+            
+            if (updated) {
+              debugLog(`Propagating voice change to chapter ${ch.id}`);
+              await db.updateChapter(ch.id, { content: currentSSML });
+              await deleteChapterSections(ch.id);
+              
+              // Regenerate sections
+              const newSections = splitSSMLIntoSections(currentSSML);
+              const sectionData = newSections.map((text, i) => ({
+                id: uuidv4(),
+                chapter_id: ch.id,
+                section_index: i,
+                content: text,
+                status: 'pending'
+              }));
+              await db.insertSections(sectionData);
+            }
+          }
+        }
+      }
+    }
+
+    res.json({ success: true });
   } catch (error) {
     res.status(500).json({ error: error.message });
   }
@@ -312,36 +456,43 @@ app.post('/api/titles/:id/chapters', async (req, res) => {
   }
 });
 
-// app.get('/api/chapters/:id', async (req, res) => {
-//   try {
-//     const chapter = await db.getChapterWithTitle(req.params.id, req.clientId, req.userId);
-//     if (!chapter) return res.status(404).json({ error: 'Chapter not found' });
-//     
-//     // Fetch sections to calculate estimated duration
-//     const sections = await db.getSections(req.params.id);
-//     
-//     let totalEstimatedDuration = 0;
-//     const sectionsWithEstimates = sections.map((s, idx) => {
-//       const sectionDuration = s.content.length / 8.1 + 0.5;
-//       const startTime = totalEstimatedDuration;
-//       totalEstimatedDuration += sectionDuration;
-//       return {
-//         id: s.id,
-//         section_index: idx,
-//         estimated_duration: sectionDuration,
-//         estimated_start_time: startTime
-//       };
-//     });
-// 
-//     res.json({
-//       ...chapter,
-//       estimated_duration_seconds: totalEstimatedDuration,
-//       sections: sectionsWithEstimates
-//     });
-//   } catch (error) {
-//     res.status(500).json({ error: error.message });
-//   }
-// });
+app.patch('/api/chapters/:id', authMiddleware, async (req, res) => {
+  const { id } = req.params;
+  const { name, content, is_ssml } = req.body;
+  try {
+    const chapter = await db.getChapterWithTitle(id, req.clientId, req.userId);
+    if (!chapter) return res.status(404).json({ error: 'Chapter not found or access denied' });
+
+    const updateData = {};
+    if (name !== undefined) updateData.name = name;
+    if (is_ssml !== undefined) updateData.is_ssml = is_ssml;
+    if (content !== undefined) updateData.content = content;
+
+    await db.updateChapter(id, updateData);
+
+    // If content changed, we need to re-generate sections
+    if (content !== undefined) {
+      await deleteChapterSections(id);
+
+      const newSections = (is_ssml || chapter.is_ssml)
+        ? splitSSMLIntoSections(content)
+        : breakContentIntoSections(content);
+
+      const sectionData = newSections.map((text, i) => ({
+        id: uuidv4(),
+        chapter_id: id,
+        section_index: i,
+        content: text,
+        status: 'pending'
+      }));
+      await db.insertSections(sectionData);
+    }
+
+    res.json({ success: true });
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
 
 app.delete('/api/chapters/:id', async (req, res) => {
   const { id } = req.params;
@@ -412,7 +563,15 @@ app.get('/api/chapters/:chapterId/stream', async (req, res) => {
             }
           });
         };
-        const ssmlContent = `<speak>${escapeXml(section.content)}<break time="500ms"/></speak>`;
+
+        let ssmlContent;
+        if (chapter.is_ssml) {
+          // Section content is already valid SSML (including <speak> tags from splitSSMLIntoSections)
+          ssmlContent = section.content;
+        } else {
+          ssmlContent = `<speak>${escapeXml(section.content)}<break time="500ms"/></speak>`;
+        }
+
         const request = {
           input: { ssml: ssmlContent },
           voice: { languageCode: 'en-US', name: chapter.voice_id || 'en-US-Chirp3-HD-Aoede' },

@@ -24,6 +24,8 @@ steps:
       - 'VITE_FIREBASE_APP_ID=${_VITE_FIREBASE_APP_ID}'
       - '--build-arg'
       - 'VITE_GOOGLE_CLIENT_ID=${_VITE_GOOGLE_CLIENT_ID}'
+      - '--build-arg'
+      - 'GEMINI_API_KEY=${_GEMINI_API_KEY}'
       - '.'
 
   # Step 3: Push the image
@@ -50,7 +52,7 @@ steps:
       - '--add-volume-mount'
       - 'volume=storage-volume,mount-path=/app/storage'
       - '--update-env-vars'
-      - 'STORAGE_BASE_PATH=/app/storage,GOOGLE_APPLICATION_CREDENTIALS=/app/backend/ai-audio-book-key.json,NODE_ENV=production,GOOGLE_CLOUD_PROJECT=$PROJECT_ID'
+      - 'STORAGE_BASE_PATH=/app/storage,GOOGLE_APPLICATION_CREDENTIALS=/app/backend/ai-audio-book-key.json,NODE_ENV=production,GOOGLE_CLOUD_PROJECT=$PROJECT_ID,GEMINI_API_KEY=${_GEMINI_API_KEY}'
 
   # Step 5: Deploy Sample Generation Job
   - name: 'gcr.io/cloud-builders/gcloud'
@@ -72,7 +74,7 @@ steps:
       - '--add-volume-mount'
       - 'volume=storage-volume,mount-path=/app/storage'
       - '--update-env-vars'
-      - 'STORAGE_BASE_PATH=/app/storage,GOOGLE_APPLICATION_CREDENTIALS=/app/backend/ai-audio-book-key.json,NODE_ENV=production,GOOGLE_CLOUD_PROJECT=$PROJECT_ID'
+      - 'STORAGE_BASE_PATH=/app/storage,GOOGLE_APPLICATION_CREDENTIALS=/app/backend/ai-audio-book-key.json,NODE_ENV=production,GOOGLE_CLOUD_PROJECT=$PROJECT_ID,GEMINI_API_KEY=${_GEMINI_API_KEY}'
 
   # Step 6: Execute Sample Generation Job
   - name: 'gcr.io/cloud-builders/gcloud'
@@ -97,3 +99,4 @@ substitutions:
   _VITE_FIREBASE_MESSAGING_SENDER_ID: ''
   _VITE_FIREBASE_APP_ID: ''
   _VITE_GOOGLE_CLIENT_ID: ''
+  _GEMINI_API_KEY: ''

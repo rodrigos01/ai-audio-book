@@ -27,6 +27,9 @@ export default function TitleDetail() {
   const [isChangingVoice, setIsChangingVoice] = useState(false);
   const [linkedDoc, setLinkedDoc] = useState(null); // { id: string, title: string }
   const [syncing, setSyncing] = useState(false);
+  const [castingChapterId, setCastingChapterId] = useState(null);
+  const [castingMap, setCastingMap] = useState({}); // { "Character": "voice-id" }
+  const [changingCharacter, setChangingCharacter] = useState(null); // Character name being changed
   const [error, setError] = useState(null);
   
   const { user, googleAccessToken, getToken, loginWithGoogle } = useAuth();
@@ -51,7 +54,9 @@ export default function TitleDetail() {
       if (!snap.exists()) {
         setError('Book not found');
       } else {
-        setTitle({ id: snap.id, ...snap.data() });
+        const data = snap.data();
+        setTitle({ id: snap.id, ...data });
+        if (data.casting_map) setCastingMap(data.casting_map);
       }
     }).catch(err => {
       if (err.code === 'permission-denied') {
@@ -168,11 +173,40 @@ export default function TitleDetail() {
     }
   };
 
+  const handleCastChapter = async (chapterId) => {
+    setCastingChapterId(chapterId);
+    setError(null);
+    try {
+      const token = await getToken();
+      await api.castChapter(chapterId, token);
+      // The Firestore snapshot will update the chapters and title casting_map
+    } catch (err) {
+      setError(err.message);
+    } finally {
+      setCastingChapterId(null);
+    }
+  };
+
+  const handleUpdateCharacterVoice = async (character, voiceId) => {
+    const newMap = { ...castingMap, [character]: voiceId };
+    setCastingMap(newMap);
+    setIsChangingVoice(false);
+    setChangingCharacter(null);
+    
+    try {
+      const token = await getToken();
+      await api.updateTitle(id, { casting_map: newMap }, token);
+      // Propagation to chapters and section invalidation is now handled by the backend
+    } catch (err) {
+      setError(err.message);
+    }
+  };
+
   const handleRenameChapter = async (chapterId) => {
     if (!editChapterName.trim()) return;
     try {
       const token = await getToken();
-      await api.updateChapter(chapterId, editChapterName, token);
+      await api.updateChapter(chapterId, { name: editChapterName }, token);
       setEditingChapterId(null);
     } catch (e) {
       console.error(e);
@@ -187,6 +221,103 @@ export default function TitleDetail() {
     } catch (e) {
       console.error(e);
     }
+  };
+
+  const VoiceSelector = ({ onSelect, currentVoiceId }) => {
+    return (
+      <>
+        <div className="flex-col gap-4" style={{ backgroundColor: 'var(--md-sys-color-surface-container-highest)', padding: '1rem', borderRadius: '1rem', marginBottom: '1rem' }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '1rem' }}>
+                <span style={{ fontSize: '0.8rem', fontWeight: 500, minWidth: '60px' }}>Gender:</span>
+                <md-chip-set>
+                    <md-filter-chip 
+                        label="Male" 
+                        selected={filterGender === 'Male' || undefined}
+                        onClick={() => setFilterGender(filterGender === 'Male' ? null : 'Male')}
+                    ></md-filter-chip>
+                    <md-filter-chip 
+                        label="Female" 
+                        selected={filterGender === 'Female' || undefined}
+                        onClick={() => setFilterGender(filterGender === 'Female' ? null : 'Female')}
+                    ></md-filter-chip>
+                </md-chip-set>
+            </div>
+            <div style={{ display: 'flex', alignItems: 'flex-start', gap: '1rem' }}>
+                <span style={{ fontSize: '0.8rem', fontWeight: 500, minWidth: '60px', marginTop: '8px' }}>Style:</span>
+                <md-chip-set style={{ display: 'flex', flexWrap: 'wrap' }}>
+                    {styleTags.map(tag => (
+                        <md-filter-chip 
+                            key={tag}
+                            label={tag}
+                            selected={filterStyle === tag || undefined}
+                            onClick={() => setFilterStyle(filterStyle === tag ? null : tag)}
+                        ></md-filter-chip>
+                    ))}
+                </md-chip-set>
+            </div>
+        </div>
+        <div className="voice-grid">
+          {filteredVoices.map((voice) => (
+            <div key={voice.id} style={{ display: 'flex', flexDirection: 'column' }}>
+              <div 
+                onClick={() => onSelect(voice.id)}
+                style={{ 
+                  padding: '1.25rem', 
+                  borderRadius: '1.25rem', 
+                  cursor: 'pointer',
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'space-between',
+                  border: '2px solid transparent',
+                  borderColor: currentVoiceId === voice.id ? 'var(--md-sys-color-primary)' : 'var(--md-sys-color-outline-variant)',
+                  backgroundColor: currentVoiceId === voice.id ? 'var(--md-sys-color-primary-container)' : 'var(--md-sys-color-surface-container-high)',
+                  transition: 'all 0.25s cubic-bezier(0.4, 0, 0.2, 1)',
+                  zIndex: 1
+                }}
+              >
+                <div className="flex-col gap-1">
+                  <span style={{ fontWeight: 600, fontSize: '0.95rem', color: currentVoiceId === voice.id ? 'var(--md-sys-color-on-primary-container)' : 'var(--md-sys-color-on-surface)' }}>{voice.name}</span>
+                  <div className="flex-row gap-2">
+                    <span className="text-xs" style={{ padding: '2px 8px', borderRadius: '4px', backgroundColor: 'rgba(0,0,0,0.2)', color: 'var(--md-sys-color-on-surface-variant)' }}>{voice.gender}</span>
+                    <span className="text-xs" style={{ padding: '2px 8px', borderRadius: '4px', backgroundColor: 'rgba(0,0,0,0.2)', color: 'var(--md-sys-color-secondary)' }}>{voice.quality}</span>
+                    <span className="text-xs" style={{ padding: '2px 8px', borderRadius: '4px', backgroundColor: 'var(--md-sys-color-tertiary-container)', color: 'var(--md-sys-color-on-tertiary-container)' }}>{voice.style}</span>
+                  </div>
+                </div>
+                <div style={{ display: 'flex', gap: '0.25rem' }}>
+                  <md-icon-button 
+                    className="desktop-hide"
+                    onClick={(e) => { e.stopPropagation(); setExpandedVoiceId(expandedVoiceId === voice.id ? null : voice.id); }}
+                    style={{'--md-icon-button-icon-color': currentVoiceId === voice.id ? 'var(--md-sys-color-on-primary-container)' : 'var(--md-sys-color-primary)'}}
+                  >
+                    <md-icon><span className="material-symbols-outlined">{expandedVoiceId === voice.id ? 'info' : 'info_outline'}</span></md-icon>
+                  </md-icon-button>
+                  <md-icon-button 
+                    onClick={(e) => { e.stopPropagation(); handlePreviewVoice(voice); }}
+                    style={{'--md-icon-button-icon-color': currentVoiceId === voice.id ? 'var(--md-sys-color-on-primary-container)' : 'var(--md-sys-color-primary)'}}
+                  >
+                    <md-icon><span className="material-symbols-outlined">{previewingId === voice.id ? 'pause_circle' : 'play_circle'}</span></md-icon>
+                  </md-icon-button>
+                </div>
+              </div>
+              <div className={`voice-description ${expandedVoiceId === voice.id ? 'expanded' : ''}`} style={{ 
+                backgroundColor: 'var(--md-sys-color-surface-container-low)',
+                borderBottomLeftRadius: '1.25rem',
+                borderBottomRightRadius: '1.25rem',
+                marginTop: '-0.75rem',
+                paddingTop: '0.75rem',
+                border: '1px solid var(--md-sys-color-outline-variant)',
+                borderTop: 'none'
+              }}>
+                <div style={{ padding: '1rem', fontSize: '0.875rem', color: 'var(--md-sys-color-on-surface-variant)', lineHeight: '1.4' }}>
+                    <div style={{ fontStyle: 'italic', marginBottom: '0.5rem' }}>"{voice.personality}"</div>
+                    <div style={{ opacity: 0.8 }}>{voice.description}</div>
+                </div>
+              </div>
+            </div>
+          ))}
+        </div>
+      </>
+    );
   };
 
   return (
@@ -215,10 +346,15 @@ export default function TitleDetail() {
       {!error && (
         <>
           <section className="animate-fade-in">
-            <h2 style={{ fontSize: '1.5rem', color: 'var(--md-sys-color-on-surface)', marginBottom: '1.5rem', fontWeight: 500, display: 'flex', alignItems: 'center', gap: '0.75rem', paddingLeft: '0.5rem' }}>
+            <h2 style={{ fontSize: '1.5rem', color: 'var(--md-sys-color-on-surface)', marginBottom: '0.5rem', fontWeight: 500, display: 'flex', alignItems: 'center', gap: '0.75rem', paddingLeft: '0.5rem' }}>
               <md-icon><span className="material-symbols-outlined">book</span></md-icon>
               {title?.name || 'Loading Book...'}
             </h2>
+            {title?.ai_casting_enabled && (
+              <div style={{ paddingLeft: '3.25rem', marginBottom: '1.5rem', display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                <span style={{ fontSize: '0.75rem', padding: '4px 12px', borderRadius: '100px', backgroundColor: 'var(--md-sys-color-primary-container)', color: 'var(--md-sys-color-on-primary-container)', fontWeight: 600 }}>AI CASTING ENABLED</span>
+              </div>
+            )}
             
             {loading ? (
               <md-linear-progress indeterminate style={{ width: '100%', borderRadius: '4px' }}></md-linear-progress>
@@ -293,6 +429,28 @@ export default function TitleDetail() {
                         <div slot="end" style={{ display: 'flex', gap: '0.5rem', alignItems: 'center' }} onClick={(e) => e.stopPropagation()}>
                           {editingChapterId !== chapter.id && (
                             <>
+                              {title?.ai_casting_enabled && !chapter.is_ssml && (
+                                <md-filled-tonal-button 
+                                  onClick={() => handleCastChapter(chapter.id)} 
+                                  disabled={castingChapterId !== null || undefined} 
+                                  style={{ '--md-filled-tonal-button-container-shape': '8px' }}
+                                >
+                                  {castingChapterId === chapter.id ? (
+                                    <>
+                                      <md-icon slot="icon"><md-circular-progress indeterminate style={{ '--md-circular-progress-size': '18px' }}></md-circular-progress></md-icon>
+                                      Casting...
+                                    </>
+                                  ) : (
+                                    <>
+                                      <md-icon slot="icon"><span className="material-symbols-outlined">auto_awesome</span></md-icon>
+                                      Cast
+                                    </>
+                                  )}
+                                </md-filled-tonal-button>
+                              )}
+                              {chapter.is_ssml && (
+                                 <md-icon style={{ color: 'var(--md-sys-color-tertiary)', marginRight: '0.5rem' }} title="AI Casted"><span className="material-symbols-outlined">verified</span></md-icon>
+                              )}
                               <md-icon-button onClick={() => { setEditingChapterId(chapter.id); setEditChapterName(chapter.name || `Chapter ${chapter.order_index}`); }}>
                                 <md-icon><span className="material-symbols-outlined">edit</span></md-icon>
                               </md-icon-button>
@@ -311,6 +469,82 @@ export default function TitleDetail() {
               </md-list>
             )}
           </section>
+
+          {title?.ai_casting_enabled && Object.keys(castingMap).length > 0 && (
+            <section className="surface-container animate-fade-in" style={{ backgroundColor: 'var(--md-sys-color-surface-container-high)', border: '1px solid var(--md-sys-color-outline-variant)' }}>
+               <h3 style={{ fontSize: '1.1rem', color: 'var(--md-sys-color-on-surface)', fontWeight: 500, display: 'flex', alignItems: 'center', gap: '0.75rem', marginBottom: '1.5rem' }}>
+                  <md-icon><span className="material-symbols-outlined">recent_actors</span></md-icon>
+                  Casting Review
+               </h3>
+                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(300px, 1fr))', gap: '1rem' }}>
+                  {Object.entries(castingMap).map(([character, voiceId]) => {
+                    const voice = voices.find(v => v.id === voiceId);
+                    const isChanging = changingCharacter === character;
+                    return (
+                      <div key={character} style={{ display: 'contents' }}>
+                        <div style={{ 
+                          padding: '1.25rem', 
+                          borderRadius: '1.25rem', 
+                          backgroundColor: 'var(--md-sys-color-surface-container-highest)',
+                          border: isChanging ? '2px solid var(--md-sys-color-primary)' : '1px solid var(--md-sys-color-outline-variant)',
+                          display: 'flex',
+                          flexDirection: 'column',
+                          gap: '1rem'
+                        }}>
+                          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+                            <div className="flex-col">
+                              <span className="text-xs" style={{ color: 'var(--md-sys-color-primary)', fontWeight: 600, textTransform: 'uppercase' }}>Character</span>
+                              <span style={{ fontSize: '1.1rem', fontWeight: 600 }}>{character}</span>
+                            </div>
+                            <md-icon><span className="material-symbols-outlined">person</span></md-icon>
+                          </div>
+                          <md-divider></md-divider>
+                          <div className="flex-row gap-4" style={{ alignItems: 'center' }}>
+                            <div className="flex-col" style={{ flex: 1 }}>
+                              <span className="text-xs" style={{ color: 'var(--md-sys-color-on-surface-variant)' }}>Assigned Voice</span>
+                              <span style={{ fontWeight: 500 }}>{voice?.name || 'Unknown Voice'}</span>
+                            </div>
+                            <div className="flex-row gap-1">
+                              <md-icon-button onClick={() => handlePreviewVoice(voice)}>
+                                <md-icon><span className="material-symbols-outlined">{previewingId === voice?.id ? 'pause_circle' : 'play_circle'}</span></md-icon>
+                              </md-icon-button>
+                              <md-filled-tonal-button onClick={() => { 
+                                if (isChanging) {
+                                  setChangingCharacter(null);
+                                  setIsChangingVoice(false);
+                                } else {
+                                  setChangingCharacter(character); 
+                                  setIsChangingVoice(true); 
+                                  setFilterStyle(voice?.style); 
+                                }
+                              }} style={{ '--md-filled-tonal-button-container-shape': '8px' }}>
+                                {isChanging ? 'Cancel' : 'Change'}
+                              </md-filled-tonal-button>
+                            </div>
+                          </div>
+                        </div>
+                        {isChanging && (
+                          <div style={{ gridColumn: '1 / -1', marginTop: '0.5rem', marginBottom: '1.5rem' }}>
+                            <div style={{ padding: '1.5rem', backgroundColor: 'var(--md-sys-color-surface-container-lowest)', borderRadius: '1.5rem', border: '1px solid var(--md-sys-color-primary)' }}>
+                               <div className="flex-row" style={{ justifyContent: 'space-between', alignItems: 'center', marginBottom: '1rem' }}>
+                                  <h4 style={{ margin: 0 }}>Select New Voice for {character}</h4>
+                                  <md-icon-button onClick={() => { setChangingCharacter(null); setIsChangingVoice(false); }}>
+                                    <md-icon><span className="material-symbols-outlined">close</span></md-icon>
+                                  </md-icon-button>
+                               </div>
+                               <VoiceSelector 
+                                 onSelect={(vid) => handleUpdateCharacterVoice(character, vid)}
+                                 currentVoiceId={voiceId}
+                               />
+                            </div>
+                          </div>
+                        )}
+                      </div>
+                    );
+                  })}
+                </div>
+            </section>
+          )}
 
           {/* Add Chapter Section */}
           <section className="surface-container animate-fade-in" style={{ 
@@ -387,7 +621,7 @@ export default function TitleDetail() {
                     </h3>
                 </div>
 
-                {!isChangingVoice && selectedVoice ? (
+                {!isChangingVoice && (selectedVoice || title?.ai_casting_enabled) ? (
                   <div style={{ 
                     padding: '1.25rem', 
                     borderRadius: '1.25rem', 
@@ -397,159 +631,68 @@ export default function TitleDetail() {
                     justifyContent: 'space-between',
                     border: '1px solid var(--md-sys-color-outline-variant)'
                   }}>
-                    <div className="flex-row gap-4" style={{ alignItems: 'center' }}>
-                      <div style={{ 
-                        width: '48px', 
-                        height: '48px', 
-                        borderRadius: '12px', 
-                        backgroundColor: 'var(--md-sys-color-primary)', 
-                        display: 'flex', 
-                        alignItems: 'center', 
-                        justifyContent: 'center',
-                        color: 'var(--md-sys-color-on-primary)'
-                      }}>
-                        <md-icon><span className="material-symbols-outlined">person</span></md-icon>
+                    {title?.ai_casting_enabled ? (
+                      <div className="flex-row gap-4" style={{ alignItems: 'center' }}>
+                         <md-icon style={{ color: 'var(--md-sys-color-primary)' }}><span className="material-symbols-outlined">auto_awesome</span></md-icon>
+                         <div className="flex-col">
+                            <span style={{ fontWeight: 600 }}>Automated AI Casting</span>
+                            <span className="text-xs" style={{ color: 'var(--md-sys-color-on-surface-variant)' }}>Voices will be assigned automatically based on text analysis.</span>
+                         </div>
                       </div>
-                      <div className="flex-col">
-                        <span style={{ fontWeight: 600, color: 'var(--md-sys-color-on-surface)' }}>
-                          {voices.find(v => v.id === selectedVoice)?.name}
-                        </span>
-                        <div className="flex-row gap-2">
-                           <span className="text-xs" style={{ color: 'var(--md-sys-color-primary)' }}>{voices.find(v => v.id === selectedVoice)?.style}</span>
-                           <span style={{ opacity: 0.3 }}>•</span>
-                           <span className="text-xs" style={{ color: 'var(--md-sys-color-on-surface-variant)' }}>{voices.find(v => v.id === selectedVoice)?.gender}</span>
+                    ) : (
+                      <div className="flex-row gap-4" style={{ alignItems: 'center' }}>
+                        <div style={{ 
+                          width: '48px', 
+                          height: '48px', 
+                          borderRadius: '12px', 
+                          backgroundColor: 'var(--md-sys-color-primary)', 
+                          display: 'flex', 
+                          alignItems: 'center', 
+                          justifyContent: 'center',
+                          color: 'var(--md-sys-color-on-primary)'
+                        }}>
+                          <md-icon><span className="material-symbols-outlined">person</span></md-icon>
+                        </div>
+                        <div className="flex-col">
+                          <span style={{ fontWeight: 600, color: 'var(--md-sys-color-on-surface)' }}>
+                            {voices.find(v => v.id === selectedVoice)?.name}
+                          </span>
+                          <div className="flex-row gap-2">
+                             <span className="text-xs" style={{ color: 'var(--md-sys-color-primary)' }}>{voices.find(v => v.id === selectedVoice)?.style}</span>
+                             <span style={{ opacity: 0.3 }}>•</span>
+                             <span className="text-xs" style={{ color: 'var(--md-sys-color-on-surface-variant)' }}>{voices.find(v => v.id === selectedVoice)?.gender}</span>
+                          </div>
                         </div>
                       </div>
-                    </div>
+                    )}
                     <div className="flex-row gap-2">
-                      <md-icon-button onClick={() => handlePreviewVoice(voices.find(v => v.id === selectedVoice))}>
-                        <md-icon>
-                          <span className="material-symbols-outlined">
-                            {previewingId === selectedVoice ? 'pause_circle' : 'play_circle'}
-                          </span>
-                        </md-icon>
-                      </md-icon-button>
-                      <md-outlined-button onClick={() => setIsChangingVoice(true)}>
-                        Change
-                      </md-outlined-button>
+                      {!title?.ai_casting_enabled && (
+                        <md-icon-button onClick={() => handlePreviewVoice(voices.find(v => v.id === selectedVoice))}>
+                          <md-icon>
+                            <span className="material-symbols-outlined">
+                              {previewingId === selectedVoice ? 'pause_circle' : 'play_circle'}
+                            </span>
+                          </md-icon>
+                        </md-icon-button>
+                      )}
+                      {!title?.ai_casting_enabled && (
+                        <md-outlined-button onClick={() => setIsChangingVoice(true)}>
+                          Change
+                        </md-outlined-button>
+                      )}
                     </div>
                   </div>
                 ) : (
-                  <>
-                    <div className="flex-col gap-4" style={{ backgroundColor: 'var(--md-sys-color-surface-container-highest)', padding: '1rem', borderRadius: '1rem' }}>
-                        {/* Gender Filter */}
-                        <div style={{ display: 'flex', alignItems: 'center', gap: '1rem' }}>
-                            <span style={{ fontSize: '0.8rem', fontWeight: 500, minWidth: '60px' }}>Gender:</span>
-                            <md-chip-set>
-                                <md-filter-chip 
-                                    label="Male" 
-                                    selected={filterGender === 'Male' || undefined}
-                                    onClick={() => setFilterGender(filterGender === 'Male' ? null : 'Male')}
-                                ></md-filter-chip>
-                                <md-filter-chip 
-                                    label="Female" 
-                                    selected={filterGender === 'Female' || undefined}
-                                    onClick={() => setFilterGender(filterGender === 'Female' ? null : 'Female')}
-                                ></md-filter-chip>
-                            </md-chip-set>
-                        </div>
-
-                        {/* Style Filter */}
-                        <div style={{ display: 'flex', alignItems: 'flex-start', gap: '1rem' }}>
-                            <span style={{ fontSize: '0.8rem', fontWeight: 500, minWidth: '60px', marginTop: '8px' }}>Style:</span>
-                            <md-chip-set style={{ display: 'flex', flexWrap: 'wrap' }}>
-                                {styleTags.map(tag => (
-                                    <md-filter-chip 
-                                        key={tag}
-                                        label={tag}
-                                        selected={filterStyle === tag || undefined}
-                                        onClick={() => setFilterStyle(filterStyle === tag ? null : tag)}
-                                    ></md-filter-chip>
-                                ))}
-                            </md-chip-set>
-                        </div>
+                  <div style={{ backgroundColor: 'var(--md-sys-color-surface-container-lowest)', padding: '1.5rem', borderRadius: '1.5rem', border: '1px solid var(--md-sys-color-outline-variant)' }}>
+                    <div className="flex-row" style={{ justifyContent: 'space-between', alignItems: 'center', marginBottom: '1rem' }}>
+                       <h4 style={{ margin: 0 }}>Select Narrator Voice</h4>
+                       <md-text-button onClick={() => setIsChangingVoice(false)}>Cancel</md-text-button>
                     </div>
-
-                    <div className="voice-grid">
-                      {filteredVoices.map((voice) => (
-                        <div 
-                          key={voice.id}
-                          style={{ display: 'flex', flexDirection: 'column' }}
-                        >
-                          <div 
-                            onClick={() => { setSelectedVoice(voice.id); setIsChangingVoice(false); }}
-                            style={{ 
-                              padding: '1.25rem', 
-                              borderRadius: '1.25rem', 
-                              cursor: 'pointer',
-                              display: 'flex',
-                              alignItems: 'center',
-                              justifyContent: 'space-between',
-                              border: '2px solid transparent',
-                              borderColor: selectedVoice === voice.id ? 'var(--md-sys-color-primary)' : 'var(--md-sys-color-outline-variant)',
-                              backgroundColor: selectedVoice === voice.id ? 'var(--md-sys-color-primary-container)' : 'var(--md-sys-color-surface-container-high)',
-                              transition: 'all 0.25s cubic-bezier(0.4, 0, 0.2, 1)',
-                              zIndex: 1
-                            }}
-                          >
-                            <div className="flex-col gap-1">
-                              <span style={{ fontWeight: 600, fontSize: '0.95rem', color: selectedVoice === voice.id ? 'var(--md-sys-color-on-primary-container)' : 'var(--md-sys-color-on-surface)' }}>{voice.name}</span>
-                              <div className="flex-row gap-2">
-                                <span className="text-xs" style={{ padding: '2px 8px', borderRadius: '4px', backgroundColor: 'rgba(0,0,0,0.2)', color: 'var(--md-sys-color-on-surface-variant)' }}>{voice.gender}</span>
-                                <span className="text-xs" style={{ padding: '2px 8px', borderRadius: '4px', backgroundColor: 'rgba(0,0,0,0.2)', color: 'var(--md-sys-color-secondary)' }}>{voice.quality}</span>
-                                <span className="text-xs" style={{ padding: '2px 8px', borderRadius: '4px', backgroundColor: 'var(--md-sys-color-tertiary-container)', color: 'var(--md-sys-color-on-tertiary-container)' }}>{voice.style}</span>
-                              </div>
-                            </div>
-                            <div style={{ display: 'flex', gap: '0.25rem' }}>
-                              <md-icon-button 
-                                className="desktop-hide"
-                                onClick={(e) => { e.stopPropagation(); setExpandedVoiceId(expandedVoiceId === voice.id ? null : voice.id); }}
-                                style={{'--md-icon-button-icon-color': selectedVoice === voice.id ? 'var(--md-sys-color-on-primary-container)' : 'var(--md-sys-color-primary)'}}
-                              >
-                                <md-icon>
-                                  <span className="material-symbols-outlined">
-                                    {expandedVoiceId === voice.id ? 'info' : 'info_outline'}
-                                  </span>
-                                </md-icon>
-                              </md-icon-button>
-                              <md-icon-button 
-                                onClick={(e) => { e.stopPropagation(); handlePreviewVoice(voice); }}
-                                style={{'--md-icon-button-icon-color': selectedVoice === voice.id ? 'var(--md-sys-color-on-primary-container)' : 'var(--md-sys-color-primary)'}}
-                              >
-                                <md-icon>
-                                  <span className="material-symbols-outlined">
-                                    {previewingId === voice.id ? 'pause_circle' : 'play_circle'}
-                                  </span>
-                                </md-icon>
-                              </md-icon-button>
-                            </div>
-                          </div>
-                          
-                          {/* Expandable Description Area */}
-                          <div className={`voice-description ${expandedVoiceId === voice.id ? 'expanded' : ''}`} style={{ 
-                            backgroundColor: 'var(--md-sys-color-surface-container-low)',
-                            borderBottomLeftRadius: '1.25rem',
-                            borderBottomRightRadius: '1.25rem',
-                            marginTop: '-0.75rem',
-                            paddingTop: '0.75rem',
-                            border: '1px solid var(--md-sys-color-outline-variant)',
-                            borderTop: 'none'
-                          }}>
-                            <div style={{ padding: '1rem', fontSize: '0.875rem', color: 'var(--md-sys-color-on-surface-variant)', lineHeight: '1.4' }}>
-                                <div style={{ fontWeight: 600, color: 'var(--md-sys-color-primary)', marginBottom: '0.25rem' }}>{voice.archetype}</div>
-                                <div style={{ fontStyle: 'italic', marginBottom: '0.5rem' }}>"{voice.personality}"</div>
-                                <div style={{ opacity: 0.8 }}>{voice.description}</div>
-                            </div>
-                          </div>
-                        </div>
-                      ))}
-                    </div>
-                    {selectedVoice && (
-                      <md-text-button onClick={() => setIsChangingVoice(false)} style={{ alignSelf: 'center' }}>
-                         Keep Current Voice
-                      </md-text-button>
-                    )}
-                  </>
+                    <VoiceSelector 
+                      onSelect={(vid) => { setSelectedVoice(vid); setIsChangingVoice(false); }}
+                      currentVoiceId={selectedVoice}
+                    />
+                  </div>
                 )}
               </div>
 
