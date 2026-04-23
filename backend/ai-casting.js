@@ -45,13 +45,15 @@ class AICastingService {
             style: v.style,
         }));
 
+        const currentCastString = Object.keys(existingCast).map(k => `${k}: ${existingCast[k]}`).join('\n');
+
         // Phase 1: Casting
         const castingPrompt = `
             ### Task: Phase 1 - Character Identification & Casting
             Analyze the chapter text below and provide an updated casting map.
 
             ### Available Voices:
-            ${JSON.stringify(availableVoices, null, 2)}
+            ${currentCastString}
 
             ### Current Title Cast:
             ${JSON.stringify(existingCast, null, 2)}
@@ -66,20 +68,40 @@ class AICastingService {
             ${chapterText}
         `;
 
-        const castingSchema = z.object({
-            updated_cast: z.record(z.string(), z.string().describe("The ID of the voice to use for this character. It must be the actual ID value from the available voices list.")),
-            narrator_voice: z.string().describe("The ID of the voice to use for the narrator. It must be the actual ID value from the available voices list."),
-        });
+        const castingSchema = {
+            type: "object",
+            properties: {
+                updated_cast: {
+                    type: "array",
+                    items: {
+                        type: "object",
+                        properties: {
+                            name: {
+                                type: "string"
+                            },
+                            voice_id: {
+                                type: "string"
+                            }
+                        },
+                        required: ["name", "voice_id"]
+                    }
+                },
+                narrator_voice: {
+                    type: "string"
+                }
+            },
+            required: ["updated_cast", "narrator_voice"]
+        }
 
         const castingResult = await this.genAI.models.generateContent({
             ...this.modelConfig,
             config: {
                 responseMimeType: "application/json",
-                responseSchema: zodToJsonSchema(castingSchema),
+                responseSchema: castingSchema,
             },
             contents: castingPrompt,
         });
-        const castingResponse = castingSchema.parse(JSON.parse(castingResult.text));
+        const castingResponse = JSON.parse(castingResult.text);
         const updatedCast = castingResponse.updated_cast;
 
         // Phase 2: SSML Generation
@@ -101,23 +123,18 @@ class AICastingService {
             ${chapterText}
         `;
 
-        const ssmlSchema = z.object({
-            ssml: z.string(),
-        });
-
         const ssmlResult = await this.genAI.models.generateContent({
             ...this.modelConfig,
-            config: {
-                responseMimeType: "application/json",
-                responseSchema: zodToJsonSchema(ssmlSchema),
-            },
             contents: ssmlPrompt,
         });
-        const ssmlResponse = ssmlSchema.parse(JSON.parse(ssmlResult.text));
+        const ssmlResponse = ssmlResult.text;
 
         return {
-            updated_cast: updatedCast,
-            ssml: ssmlResponse.ssml,
+            updated_cast: updatedCast.reduce((acc, { name, voice_id }) => {
+                acc[name] = voice_id;
+                return acc;
+            }, {}),
+            ssml: ssmlResponse,
             narrator_voice: castingResponse.narrator_voice,
         };
     }

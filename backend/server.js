@@ -141,18 +141,18 @@ async function deleteChapterSections(chapterId) {
 
     const admin = require('./firebase-config');
     const batch = admin.firestore().batch();
-    
+
     sections.forEach(s => {
       // Delete from DB
       batch.delete(admin.firestore().collection('chapter_sections').doc(s.id));
-      
+
       // Delete from Disk
       const audioPath = path.join(audioDir, `${s.id}.mp3`);
       if (fs.existsSync(audioPath)) {
         try { fs.unlinkSync(audioPath); } catch (e) { debugLog(`Error deleting file: ${e.message}`); }
       }
     });
-    
+
     await batch.commit();
     debugLog(`Cleaned up ${sections.length} sections for chapter ${chapterId}`);
   } catch (e) {
@@ -276,7 +276,7 @@ app.post('/api/chapters/:chapterId/cast', authMiddleware, async (req, res) => {
       sections_count: sectionData.length
     });
   } catch (error) {
-    debugLog(`AI Casting Error: ${error.message}`);
+    debugLog(`AI Casting Error: ${error.message}\n${error.stack}`);
     res.status(500).json({ error: error.message });
   }
 });
@@ -335,7 +335,7 @@ app.patch('/api/titles/:id', authMiddleware, async (req, res) => {
   try {
     const title = await db.getTitle(id, req.clientId, req.userId);
     if (!title) return res.status(404).json({ error: 'Title not found' });
-    
+
     const updateData = {};
     if (name !== undefined) updateData.name = name;
     if (casting_map !== undefined) updateData.casting_map = casting_map;
@@ -346,9 +346,9 @@ app.patch('/api/titles/:id', authMiddleware, async (req, res) => {
     if (casting_map !== undefined) {
       const oldMap = title.casting_map || {};
       const newMap = casting_map;
-      
+
       const changedCharacters = Object.keys(newMap).filter(char => oldMap[char] !== newMap[char]);
-      
+
       if (changedCharacters.length > 0) {
         debugLog(`Voice change detected for characters: ${changedCharacters.join(', ')}`);
         const chapters = await db.getChapters(id);
@@ -356,7 +356,7 @@ app.patch('/api/titles/:id', authMiddleware, async (req, res) => {
           if (ch.is_ssml) {
             let updated = false;
             let currentSSML = ch.content;
-            
+
             changedCharacters.forEach(char => {
               const oldVoice = oldMap[char];
               const newVoice = newMap[char];
@@ -366,12 +366,12 @@ app.patch('/api/titles/:id', authMiddleware, async (req, res) => {
                 updated = true;
               }
             });
-            
+
             if (updated) {
               debugLog(`Propagating voice change to chapter ${ch.id}`);
               await db.updateChapter(ch.id, { content: currentSSML });
               await deleteChapterSections(ch.id);
-              
+
               // Regenerate sections
               const newSections = splitSSMLIntoSections(currentSSML);
               const sectionData = newSections.map((text, i) => ({
