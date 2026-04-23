@@ -33,7 +33,7 @@ class AICastingService {
         };
     }
 
-    async analyzeChapter(chapterText, existingCast = {}, voiceList = []) {
+    async analyzeChapter(chapterText, existingCast = {}, voiceList = [], existingNarrator = null) {
         if (!process.env.GEMINI_API_KEY) {
             throw new Error("Gemini API key is missing. Please configure it in your environment.");
         }
@@ -46,6 +46,9 @@ class AICastingService {
         }));
 
         const currentCastString = Object.keys(existingCast).map(k => `${k}: ${existingCast[k]}`).join('\n');
+        const castContext = existingNarrator
+            ? `${currentCastString}\nNarrator: ${existingNarrator}`
+            : currentCastString;
 
         // Phase 1: Casting
         const castingPrompt = `
@@ -53,16 +56,17 @@ class AICastingService {
             Analyze the chapter text below and provide an updated casting map.
 
             ### Available Voices:
-            ${currentCastString}
+            ${JSON.stringify(availableVoices, null, 2)}
 
             ### Current Title Cast:
-            ${JSON.stringify(existingCast, null, 2)}
+            ${castContext}
 
             ### Instructions:
             1. Identify every character with dialogue in this chapter.
             2. For characters in the "Current Title Cast", you MUST reuse their assigned voice ID.
             3. For new characters, assign a voice from the "Available Voices" that matches their characteristics, personality, and gender.
-            4. Assign a Narrator voice. ONLY if the content is NOT a first person narrative, select a voice from the "Available Voices". Otherwise, use the same voice as the main character.
+                - DO NOT assign the same voice to multiple characters.
+            4. Assign a Narrator voice. ${existingNarrator ? `You MUST reuse the existing narrator voice (${existingNarrator}).` : 'ONLY if the content is NOT a first person narrative, select a voice from the "Available Voices". Otherwise, use the same voice as the main character.'}
 
             ### Chapter Text:
             ${chapterText}
@@ -102,12 +106,15 @@ class AICastingService {
             contents: castingPrompt,
         });
         const castingResponse = JSON.parse(castingResult.text);
-        const updatedCast = castingResponse.updated_cast;
+        const updatedCast = castingResponse.updated_cast.reduce((acc, { name, voice_id }) => {
+            acc[name] = voice_id;
+            return acc;
+        }, {});
 
         // Phase 2: SSML Generation
         const ssmlPrompt = `
             ### Task: Phase 2 - SSML Generation & Dramatic Rewriting
-            Using the provided casting map, rewrite the chapter text into a high-quality SSML script.
+            Using the provided casting map, rewrite the chapter text into a high-quality SSML script. Make sure the entire text is included in the SSML output
 
             ### Casting Map to Use:
             ${JSON.stringify(updatedCast, null, 2)}
@@ -118,6 +125,7 @@ class AICastingService {
             3. Use <voice name="VOICE_ID"> for ALL dialogue, where VOICE_ID is the ID of the voice from the casting map.
             4. Strip short dialogue attributions ("[pronoun] said.") ONLY IF they don't add visual or explanatory context to the scene
             5. Each <voice> tag must be contained WITHIN a <p> tag. Do not span <voice> tags across multiple paragraphs.
+            6. Identify words that require special pronunciation and wrap them in <phoneme alphabet="ipa" ph="..."> tags.
 
             ### Chapter Text:
             ${chapterText}
@@ -130,10 +138,7 @@ class AICastingService {
         const ssmlResponse = ssmlResult.text;
 
         return {
-            updated_cast: updatedCast.reduce((acc, { name, voice_id }) => {
-                acc[name] = voice_id;
-                return acc;
-            }, {}),
+            updated_cast: updatedCast,
             ssml: ssmlResponse,
             narrator_voice: castingResponse.narrator_voice,
         };

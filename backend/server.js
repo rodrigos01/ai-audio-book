@@ -239,14 +239,17 @@ app.post('/api/chapters/:chapterId/cast', authMiddleware, async (req, res) => {
 
     const VOICES = require('./voices.json');
     const existingCast = title.casting_map || {};
+    const existingNarrator = title.narrator_voice || null;
 
     debugLog(`AI Casting: Analyzing chapter ${chapterId} for ${title.name}`);
-    const result = await aiCasting.analyzeChapter(chapter.content, existingCast, VOICES);
+    const result = await aiCasting.analyzeChapter(chapter.content, existingCast, VOICES, existingNarrator);
 
-    // Update Title's casting map with any new characters
-    await db.updateTitle(title.id, {
-      casting_map: result.updated_cast
-    });
+    // Update Title's casting map and record the narrator if it's the first time
+    const titleUpdate = { casting_map: result.updated_cast };
+    if (!title.narrator_voice) {
+      titleUpdate.narrator_voice = result.narrator_voice;
+    }
+    await db.updateTitle(title.id, titleUpdate);
 
     // Update Chapter with SSML content and flag
     await db.updateChapter(chapterId, {
@@ -331,14 +334,15 @@ app.post('/api/titles', async (req, res) => {
 
 app.patch('/api/titles/:id', authMiddleware, async (req, res) => {
   const { id } = req.params;
-  const { name, casting_map } = req.body;
-  try {
-    const title = await db.getTitle(id, req.clientId, req.userId);
-    if (!title) return res.status(404).json({ error: 'Title not found' });
-
-    const updateData = {};
-    if (name !== undefined) updateData.name = name;
-    if (casting_map !== undefined) updateData.casting_map = casting_map;
+    const { name, casting_map, narrator_voice } = req.body;
+    try {
+      const title = await db.getTitle(id, req.clientId, req.userId);
+      if (!title) return res.status(404).json({ error: 'Title not found' });
+  
+      const updateData = {};
+      if (name !== undefined) updateData.name = name;
+      if (casting_map !== undefined) updateData.casting_map = casting_map;
+      if (narrator_voice !== undefined) updateData.narrator_voice = narrator_voice;
 
     await db.updateTitle(id, updateData);
 
