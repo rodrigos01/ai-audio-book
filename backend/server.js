@@ -420,9 +420,9 @@ app.delete('/api/titles/:id', async (req, res) => {
 //   }
 // });
 
-app.post('/api/titles/:id/chapters', async (req, res) => {
+app.post('/api/titles/:id/chapters', authMiddleware, async (req, res) => {
   const titleId = req.params.id;
-  const { content, voice_id, name } = req.body;
+  let { content, voice_id, name } = req.body;
 
   if (!content) return res.status(400).json({ error: 'Content is required' });
 
@@ -432,26 +432,50 @@ app.post('/api/titles/:id/chapters', async (req, res) => {
 
     const maxOrder = await db.getMaxChapterOrder(titleId);
     const orderIndex = maxOrder + 1;
-    const voiceId = voice_id || 'en-US-Chirp3-HD-Aoede';
-    const chapterId = uuidv4();
+    let voiceId = voice_id || 'en-US-Chirp3-HD-Aoede';
+    let isSSML = false;
 
+    if (title.ai_casting_enabled) {
+      try {
+        debugLog(`AI Casting: Auto-casting new chapter for ${title.name}`);
+        const VOICES = require('./voices.json');
+        const existingCast = title.casting_map || {};
+        const existingNarrator = title.narrator_voice || null;
+
+        const result = await aiCasting.analyzeChapter(content, existingCast, VOICES, existingNarrator);
+        
+        // Update Title mapping
+        const titleUpdate = { casting_map: result.updated_cast };
+        if (!title.narrator_voice) titleUpdate.narrator_voice = result.narrator_voice;
+        await db.updateTitle(titleId, titleUpdate);
+
+        content = result.ssml;
+        voiceId = result.narrator_voice;
+        isSSML = true;
+      } catch (castError) {
+        debugLog(`Auto-casting failed, falling back to standard: ${castError.message}`);
+      }
+    }
+
+    const chapterId = uuidv4();
     await db.createChapter({
       id: chapterId,
       title_id: titleId,
       order_index: orderIndex,
       content,
       voice_id: voiceId,
+      is_ssml: isSSML,
       name: name || null
     });
 
-    const sections = breakContentIntoSections(content);
+    const sections = isSSML ? splitSSMLIntoSections(content) : breakContentIntoSections(content);
     const sectionItems = sections.map((text, i) => ({
       id: uuidv4(),
       chapter_id: chapterId,
       section_index: i,
       content: text,
       status: 'pending',
-      audio_file_path: null
+      audio_url: null
     }));
     await db.insertSections(sectionItems);
     res.json({ id: chapterId, title_id: titleId, order_index: orderIndex, name });

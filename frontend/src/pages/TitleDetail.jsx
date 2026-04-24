@@ -27,7 +27,6 @@ export default function TitleDetail() {
   const [isChangingVoice, setIsChangingVoice] = useState(false);
   const [linkedDoc, setLinkedDoc] = useState(null); // { id: string, title: string }
   const [syncing, setSyncing] = useState(false);
-  const [castingChapterId, setCastingChapterId] = useState(null);
   const [castingMap, setCastingMap] = useState({}); // { "Character": "voice-id" }
   const [changingCharacter, setChangingCharacter] = useState(null); // Character name being changed
   const [error, setError] = useState(null);
@@ -170,20 +169,6 @@ export default function TitleDetail() {
     } finally {
       setCreating(false);
       setSyncing(false);
-    }
-  };
-
-  const handleCastChapter = async (chapterId) => {
-    setCastingChapterId(chapterId);
-    setError(null);
-    try {
-      const token = await getToken();
-      await api.castChapter(chapterId, token);
-      // The Firestore snapshot will update the chapters and title casting_map
-    } catch (err) {
-      setError(err.message);
-    } finally {
-      setCastingChapterId(null);
     }
   };
 
@@ -429,25 +414,6 @@ export default function TitleDetail() {
                         <div slot="end" style={{ display: 'flex', gap: '0.5rem', alignItems: 'center' }} onClick={(e) => e.stopPropagation()}>
                           {editingChapterId !== chapter.id && (
                             <>
-                              {title?.ai_casting_enabled && !chapter.is_ssml && (
-                                <md-filled-tonal-button 
-                                  onClick={() => handleCastChapter(chapter.id)} 
-                                  disabled={castingChapterId !== null || undefined} 
-                                  style={{ '--md-filled-tonal-button-container-shape': '8px' }}
-                                >
-                                  {castingChapterId === chapter.id ? (
-                                    <>
-                                      <md-icon slot="icon"><md-circular-progress indeterminate style={{ '--md-circular-progress-size': '18px' }}></md-circular-progress></md-icon>
-                                      Casting...
-                                    </>
-                                  ) : (
-                                    <>
-                                      <md-icon slot="icon"><span className="material-symbols-outlined">auto_awesome</span></md-icon>
-                                      Cast
-                                    </>
-                                  )}
-                                </md-filled-tonal-button>
-                              )}
                               {chapter.is_ssml && (
                                  <md-icon style={{ color: 'var(--md-sys-color-tertiary)', marginRight: '0.5rem' }} title="AI Casted"><span className="material-symbols-outlined">verified</span></md-icon>
                               )}
