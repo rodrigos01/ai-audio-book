@@ -29,6 +29,7 @@ export default function TitleDetail() {
   const [syncing, setSyncing] = useState(false);
   const [castingMap, setCastingMap] = useState({}); // { "Character": "voice-id" }
   const [changingCharacter, setChangingCharacter] = useState(null); // Character name being changed
+  const [showAddDialog, setShowAddDialog] = useState(false);
   const [error, setError] = useState(null);
   
   const { user, googleAccessToken, getToken, loginWithGoogle } = useAuth();
@@ -164,6 +165,7 @@ export default function TitleDetail() {
       setChapterName('');
       setNewContent('');
       setLinkedDoc(null);
+      setShowAddDialog(false);
     } catch (err) {
       setError(err.message);
     } finally {
@@ -306,7 +308,8 @@ export default function TitleDetail() {
   };
 
   return (
-    <div className="flex-col gap-8 pb-10">
+    <>
+    <div className="flex-col gap-8 pb-10 animate-fade-in">
       <Link to="/" style={{ display: 'inline-flex', alignItems: 'center', gap: '0.5rem', color: 'var(--md-sys-color-primary)', textDecoration: 'none', paddingLeft: '0.5rem' }}>
         <md-icon><span className="material-symbols-outlined">arrow_back</span></md-icon>
         <span style={{ fontWeight: 500 }}>Back to Library</span>
@@ -330,15 +333,61 @@ export default function TitleDetail() {
       {/* Content Section */}
       {!error && (
         <>
-          <section className="animate-fade-in">
-            <h2 style={{ fontSize: '1.5rem', color: 'var(--md-sys-color-on-surface)', marginBottom: '0.5rem', fontWeight: 500, display: 'flex', alignItems: 'center', gap: '0.75rem', paddingLeft: '0.5rem' }}>
-              <md-icon><span className="material-symbols-outlined">book</span></md-icon>
-              {title?.name || 'Loading Book...'}
-            </h2>
-            {title?.ai_casting_enabled && (
-              <div style={{ paddingLeft: '3.25rem', marginBottom: '1.5rem', display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
-                <span style={{ fontSize: '0.75rem', padding: '4px 12px', borderRadius: '100px', backgroundColor: 'var(--md-sys-color-primary-container)', color: 'var(--md-sys-color-on-primary-container)', fontWeight: 600 }}>AI CASTING ENABLED</span>
-              </div>
+          <section className="animate-fade-in" style={{ marginBottom: '2rem' }}>
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '1.5rem', flexWrap: 'wrap', gap: '1rem' }}>
+                <h2 style={{ fontSize: '1.75rem', color: 'var(--md-sys-color-on-surface)', margin: 0, fontWeight: 500, display: 'flex', alignItems: 'center', gap: '0.75rem' }}>
+                    <md-icon><span className="material-symbols-outlined">book</span></md-icon>
+                    {title?.name || 'Loading Book...'}
+                </h2>
+                {title?.ai_casting_enabled && (
+                    <span style={{ fontSize: '0.75rem', padding: '4px 12px', borderRadius: '100px', backgroundColor: 'var(--md-sys-color-primary-container)', color: 'var(--md-sys-color-on-primary-container)', fontWeight: 600 }}>AI CASTING ENABLED</span>
+                )}
+            </div>
+
+            {title?.ai_casting_enabled && Object.keys(castingMap).length > 0 && (
+                <div style={{ 
+                    display: 'flex', 
+                    overflowX: 'auto', 
+                    gap: '1rem', 
+                    paddingBottom: '1rem', 
+                    marginBottom: '1rem',
+                    scrollbarWidth: 'none',
+                    msOverflowStyle: 'none',
+                    maxWidth: '100%'
+                }} className="no-scrollbar">
+                    {Object.entries(castingMap).map(([character, voiceId]) => {
+                        const voice = voices.find(v => v.id === voiceId);
+                        const isChanging = changingCharacter === character;
+                        return (
+                            <div key={character} style={{ minWidth: '280px' }}>
+                                <div style={{ 
+                                    padding: '1rem', 
+                                    borderRadius: '1rem', 
+                                    backgroundColor: 'var(--md-sys-color-surface-container-high)',
+                                    border: isChanging ? '2px solid var(--md-sys-color-primary)' : '1px solid var(--md-sys-color-outline-variant)',
+                                    display: 'flex',
+                                    flexDirection: 'column',
+                                    gap: '0.75rem'
+                                }}>
+                                    <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+                                        <div className="flex-col">
+                                            <span className="text-xs" style={{ color: 'var(--md-sys-color-primary)', fontWeight: 600 }}>{character}</span>
+                                            <span style={{ fontWeight: 600 }}>{voice?.name || 'Unknown'}</span>
+                                        </div>
+                                        <div style={{ display: 'flex', gap: '0.25rem' }}>
+                                            <md-icon-button onClick={() => handlePreviewVoice(voice)} style={{'--md-icon-button-icon-size': '20px'}}>
+                                                <md-icon><span className="material-symbols-outlined">{previewingId === voice?.id ? 'pause' : 'play_arrow'}</span></md-icon>
+                                            </md-icon-button>
+                                            <md-icon-button onClick={() => { setChangingCharacter(character); setIsChangingVoice(true); setFilterStyle(voice?.style); }} style={{'--md-icon-button-icon-size': '20px'}}>
+                                                <md-icon><span className="material-symbols-outlined">edit</span></md-icon>
+                                            </md-icon-button>
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+                        );
+                    })}
+                </div>
             )}
             
             {loading ? (
@@ -435,249 +484,151 @@ export default function TitleDetail() {
               </md-list>
             )}
           </section>
-
-          {title?.ai_casting_enabled && Object.keys(castingMap).length > 0 && (
-            <section className="surface-container animate-fade-in" style={{ backgroundColor: 'var(--md-sys-color-surface-container-high)', border: '1px solid var(--md-sys-color-outline-variant)' }}>
-               <h3 style={{ fontSize: '1.1rem', color: 'var(--md-sys-color-on-surface)', fontWeight: 500, display: 'flex', alignItems: 'center', gap: '0.75rem', marginBottom: '1.5rem' }}>
-                  <md-icon><span className="material-symbols-outlined">recent_actors</span></md-icon>
-                  Casting Review
-               </h3>
-                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(300px, 1fr))', gap: '1rem' }}>
-                  {Object.entries(castingMap).map(([character, voiceId]) => {
-                    const voice = voices.find(v => v.id === voiceId);
-                    const isChanging = changingCharacter === character;
-                    return (
-                      <div key={character} style={{ display: 'contents' }}>
-                        <div style={{ 
-                          padding: '1.25rem', 
-                          borderRadius: '1.25rem', 
-                          backgroundColor: 'var(--md-sys-color-surface-container-highest)',
-                          border: isChanging ? '2px solid var(--md-sys-color-primary)' : '1px solid var(--md-sys-color-outline-variant)',
-                          display: 'flex',
-                          flexDirection: 'column',
-                          gap: '1rem'
-                        }}>
-                          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-                            <div className="flex-col">
-                              <span className="text-xs" style={{ color: 'var(--md-sys-color-primary)', fontWeight: 600, textTransform: 'uppercase' }}>Character</span>
-                              <span style={{ fontSize: '1.1rem', fontWeight: 600 }}>{character}</span>
-                            </div>
-                            <md-icon><span className="material-symbols-outlined">person</span></md-icon>
-                          </div>
-                          <md-divider></md-divider>
-                          <div className="flex-row gap-4" style={{ alignItems: 'center' }}>
-                            <div className="flex-col" style={{ flex: 1 }}>
-                              <span className="text-xs" style={{ color: 'var(--md-sys-color-on-surface-variant)' }}>Assigned Voice</span>
-                              <span style={{ fontWeight: 500 }}>{voice?.name || 'Unknown Voice'}</span>
-                            </div>
-                            <div className="flex-row gap-1">
-                              <md-icon-button onClick={() => handlePreviewVoice(voice)}>
-                                <md-icon><span className="material-symbols-outlined">{previewingId === voice?.id ? 'pause_circle' : 'play_circle'}</span></md-icon>
-                              </md-icon-button>
-                              <md-filled-tonal-button onClick={() => { 
-                                if (isChanging) {
-                                  setChangingCharacter(null);
-                                  setIsChangingVoice(false);
-                                } else {
-                                  setChangingCharacter(character); 
-                                  setIsChangingVoice(true); 
-                                  setFilterStyle(voice?.style); 
-                                }
-                              }} style={{ '--md-filled-tonal-button-container-shape': '8px' }}>
-                                {isChanging ? 'Cancel' : 'Change'}
-                              </md-filled-tonal-button>
-                            </div>
-                          </div>
-                        </div>
-                        {isChanging && (
-                          <div style={{ gridColumn: '1 / -1', marginTop: '0.5rem', marginBottom: '1.5rem' }}>
-                            <div style={{ padding: '1.5rem', backgroundColor: 'var(--md-sys-color-surface-container-lowest)', borderRadius: '1.5rem', border: '1px solid var(--md-sys-color-primary)' }}>
-                               <div className="flex-row" style={{ justifyContent: 'space-between', alignItems: 'center', marginBottom: '1rem' }}>
-                                  <h4 style={{ margin: 0 }}>Select New Voice for {character}</h4>
-                                  <md-icon-button onClick={() => { setChangingCharacter(null); setIsChangingVoice(false); }}>
-                                    <md-icon><span className="material-symbols-outlined">close</span></md-icon>
-                                  </md-icon-button>
-                               </div>
-                               <VoiceSelector 
-                                 onSelect={(vid) => handleUpdateCharacterVoice(character, vid)}
-                                 currentVoiceId={voiceId}
-                               />
-                            </div>
-                          </div>
-                        )}
-                      </div>
-                    );
-                  })}
-                </div>
-            </section>
-          )}
-
-          {/* Add Chapter Section */}
-          <section className="surface-container animate-fade-in" style={{ 
-            animationDelay: '0.1s',
-            display: 'flex',
-            flexDirection: 'column',
-            gap: '2rem',
-            backgroundColor: 'var(--md-sys-color-surface-container-low)',
-            border: '1px solid var(--md-sys-color-outline-variant)'
-          }}>
-            <h2 style={{ fontSize: '1.25rem', color: 'var(--md-sys-color-on-surface)', fontWeight: 400, display: 'flex', alignItems: 'center', gap: '0.75rem' }}>
-              <md-icon><span className="material-symbols-outlined">add_circle</span></md-icon>
-      Generate New Chapter
-            </h2>
-
-            <form onSubmit={handleAddChapter} className="flex-col gap-6">
-              <div style={{ display: 'flex', gap: '1rem', alignItems: 'center' }}>
-                <md-outlined-text-field
-                  label="Chapter Name"
-                  value={chapterName}
-                  onInput={(e) => setChapterName(e.target.value)}
-                  style={{ flex: 1 }}
-                ></md-outlined-text-field>
-                {user && !user.isAnonymous && (
-                  <md-filled-button 
-                    onClick={handleImportGoogleDoc}
-                    style={{ '--md-filled-button-container-color': 'var(--md-sys-color-tertiary)' }}
-                  >
-                    <md-icon slot="icon"><span className="material-symbols-outlined">cloud_download</span></md-icon>
-                    Import
-                  </md-filled-button>
-                )}
-              </div>
-
-              {linkedDoc ? (
-                <div style={{ 
-                  padding: '1.5rem', 
-                  borderRadius: '1.25rem', 
-                  backgroundColor: 'var(--md-sys-color-secondary-container)',
-                  display: 'flex',
-                  alignItems: 'center',
-                  justifyContent: 'space-between',
-                  border: '1px solid var(--md-sys-color-outline-variant)'
-                }}>
-                  <div className="flex-row gap-3" style={{ alignItems: 'center' }}>
-                    <md-icon><span className="material-symbols-outlined" style={{ fontSize: '2rem', color: 'var(--md-sys-color-on-secondary-container)' }}>description</span></md-icon>
-                    <div className="flex-col">
-                      <span style={{ fontWeight: 600, color: 'var(--md-sys-color-on-secondary-container)' }}>{linkedDoc.title}</span>
-                      <span className="text-xs" style={{ color: 'var(--md-sys-color-on-secondary-container)', opacity: 0.8 }}>
-                        {syncing ? 'Syncing content...' : 'Content will be fetched from Google Docs'}
-                      </span>
-                    </div>
-                  </div>
-                  <md-icon-button onClick={() => setLinkedDoc(null)}>
-                    <md-icon><span className="material-symbols-outlined">close</span></md-icon>
-                  </md-icon-button>
-                </div>
-              ) : (
-                <md-outlined-text-field
-                  label="Chapter Content"
-                  type="textarea"
-                  rows="10"
-                  value={newContent}
-                  onInput={(e) => setNewContent(e.target.value)}
-                  style={{ width: '100%' }}
-                ></md-outlined-text-field>
-              )}
-
-              <div className="flex-col gap-4">
-                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                    <h3 style={{ fontSize: '1rem', color: 'var(--md-sys-color-on-surface)', fontWeight: 500, display: 'flex', alignItems: 'center', gap: '0.5rem', margin: 0 }}>
-                        <md-icon><span className="material-symbols-outlined">record_voice_over</span></md-icon>
-                        Narrator Voice
-                    </h3>
-                </div>
-
-                {!isChangingVoice && (selectedVoice || title?.ai_casting_enabled) ? (
-                  <div style={{ 
-                    padding: '1.25rem', 
-                    borderRadius: '1.25rem', 
-                    backgroundColor: 'var(--md-sys-color-surface-container-highest)',
-                    display: 'flex',
-                    alignItems: 'center',
-                    justifyContent: 'space-between',
-                    border: '1px solid var(--md-sys-color-outline-variant)'
-                  }}>
-                    {title?.ai_casting_enabled ? (
-                      <div className="flex-row gap-4" style={{ alignItems: 'center' }}>
-                         <md-icon style={{ color: 'var(--md-sys-color-primary)' }}><span className="material-symbols-outlined">auto_awesome</span></md-icon>
-                         <div className="flex-col">
-                            <span style={{ fontWeight: 600 }}>Automated AI Casting</span>
-                            <span className="text-xs" style={{ color: 'var(--md-sys-color-on-surface-variant)' }}>Voices will be assigned automatically based on text analysis.</span>
-                         </div>
-                      </div>
-                    ) : (
-                      <div className="flex-row gap-4" style={{ alignItems: 'center' }}>
-                        <div style={{ 
-                          width: '48px', 
-                          height: '48px', 
-                          borderRadius: '12px', 
-                          backgroundColor: 'var(--md-sys-color-primary)', 
-                          display: 'flex', 
-                          alignItems: 'center', 
-                          justifyContent: 'center',
-                          color: 'var(--md-sys-color-on-primary)'
-                        }}>
-                          <md-icon><span className="material-symbols-outlined">person</span></md-icon>
-                        </div>
-                        <div className="flex-col">
-                          <span style={{ fontWeight: 600, color: 'var(--md-sys-color-on-surface)' }}>
-                            {voices.find(v => v.id === selectedVoice)?.name}
-                          </span>
-                          <div className="flex-row gap-2">
-                             <span className="text-xs" style={{ color: 'var(--md-sys-color-primary)' }}>{voices.find(v => v.id === selectedVoice)?.style}</span>
-                             <span style={{ opacity: 0.3 }}>•</span>
-                             <span className="text-xs" style={{ color: 'var(--md-sys-color-on-surface-variant)' }}>{voices.find(v => v.id === selectedVoice)?.gender}</span>
-                          </div>
-                        </div>
-                      </div>
-                    )}
-                    <div className="flex-row gap-2">
-                      {!title?.ai_casting_enabled && (
-                        <md-icon-button onClick={() => handlePreviewVoice(voices.find(v => v.id === selectedVoice))}>
-                          <md-icon>
-                            <span className="material-symbols-outlined">
-                              {previewingId === selectedVoice ? 'pause_circle' : 'play_circle'}
-                            </span>
-                          </md-icon>
-                        </md-icon-button>
-                      )}
-                      {!title?.ai_casting_enabled && (
-                        <md-outlined-button onClick={() => setIsChangingVoice(true)}>
-                          Change
-                        </md-outlined-button>
-                      )}
-                    </div>
-                  </div>
-                ) : (
-                  <div style={{ backgroundColor: 'var(--md-sys-color-surface-container-lowest)', padding: '1.5rem', borderRadius: '1.5rem', border: '1px solid var(--md-sys-color-outline-variant)' }}>
-                    <div className="flex-row" style={{ justifyContent: 'space-between', alignItems: 'center', marginBottom: '1rem' }}>
-                       <h4 style={{ margin: 0 }}>Select Narrator Voice</h4>
-                       <md-text-button onClick={() => setIsChangingVoice(false)}>Cancel</md-text-button>
-                    </div>
-                    <VoiceSelector 
-                      onSelect={(vid) => { setSelectedVoice(vid); setIsChangingVoice(false); }}
-                      currentVoiceId={selectedVoice}
-                    />
-                  </div>
-                )}
-              </div>
-
-              <div className="flex-col gap-4" style={{ marginTop: '1rem' }}>
-                <md-filled-button 
-                    type="submit" 
-                    disabled={!chapterName.trim() || (!newContent.trim() && !linkedDoc) || creating || !selectedVoice || undefined}
-                    style={{ height: '56px', alignSelf: 'flex-end', minWidth: '280px', '--md-filled-button-container-shape': '16px' }}
-                  >
-                    <md-icon slot="icon"><span className="material-symbols-outlined">settings_suggest</span></md-icon>
-                    {creating ? (syncing ? 'Fetching from Google Docs...' : 'Transcribing & Generating...') : 'Generate Chapter Audio'}
-                  </md-filled-button>
-                  
-                  {creating && <md-linear-progress indeterminate style={{ width: '100%', borderRadius: '4px' }}></md-linear-progress>}
-              </div>
-            </form>
-          </section>
         </>
       )}
     </div>
+
+    {/* Modals & Overlays */}
+    {isChangingVoice && changingCharacter && (
+        <div style={{ 
+            position: 'fixed', 
+            top: 0, left: 0, right: 0, bottom: 0, 
+            backgroundColor: 'rgba(0,0,0,0.5)', 
+            zIndex: 3000, 
+            display: 'flex', 
+            alignItems: 'center', 
+            justifyContent: 'center',
+            padding: '1rem'
+        }} onClick={() => setIsChangingVoice(false)}>
+            <div style={{ 
+                backgroundColor: 'var(--md-sys-color-surface)', 
+                width: '100%', 
+                maxWidth: '800px', 
+                borderRadius: '1.75rem',
+                padding: '2.5rem',
+                overflowY: 'auto',
+                maxHeight: '90vh',
+                boxShadow: '0 24px 38px 3px rgba(0,0,0,0.14), 0 9px 46px 8px rgba(0,0,0,0.12), 0 11px 15px -7px rgba(0,0,0,0.2)'
+            }} onClick={e => e.stopPropagation()}>
+                    <div className="flex-row" style={{ justifyContent: 'space-between', alignItems: 'center', marginBottom: '2rem' }}>
+                    <h2 style={{ margin: 0, fontSize: '1.5rem', display: 'flex', alignItems: 'center', gap: '0.75rem' }}>
+                        <md-icon><span className="material-symbols-outlined">person_search</span></md-icon>
+                        Change Voice for {changingCharacter}
+                    </h2>
+                    <md-icon-button onClick={() => setIsChangingVoice(false)}>
+                        <md-icon><span className="material-symbols-outlined">close</span></md-icon>
+                    </md-icon-button>
+                    </div>
+                    <VoiceSelector 
+                    onSelect={(vid) => handleUpdateCharacterVoice(changingCharacter, vid)}
+                    currentVoiceId={castingMap[changingCharacter]}
+                    />
+            </div>
+        </div>
+    )}
+
+    {showAddDialog && (
+        <div style={{ 
+            position: 'fixed', 
+            top: 0, left: 0, right: 0, bottom: 0, 
+            backgroundColor: 'rgba(0,0,0,0.5)', 
+            zIndex: 3000, 
+            display: 'flex', 
+            alignItems: 'center', 
+            justifyContent: 'center',
+            padding: '1rem'
+        }} onClick={() => setShowAddDialog(false)}>
+            <div style={{ 
+                backgroundColor: 'var(--md-sys-color-surface)', 
+                width: '100%', 
+                maxWidth: '700px', 
+                borderRadius: '1.75rem',
+                padding: '2.5rem',
+                overflowY: 'auto',
+                maxHeight: '90vh',
+                boxShadow: '0 24px 38px 3px rgba(0,0,0,0.14), 0 9px 46px 8px rgba(0,0,0,0.12), 0 11px 15px -7px rgba(0,0,0,0.2)'
+            }} onClick={e => e.stopPropagation()}>
+                <div className="flex-row" style={{ justifyContent: 'space-between', alignItems: 'center', marginBottom: '1.5rem' }}>
+                    <h2 style={{ margin: 0, fontSize: '1.5rem', display: 'flex', alignItems: 'center', gap: '0.75rem' }}>
+                        <md-icon><span className="material-symbols-outlined">add_circle</span></md-icon>
+                        Add New Chapter
+                    </h2>
+                    <md-icon-button onClick={() => setShowAddDialog(false)}>
+                        <md-icon><span className="material-symbols-outlined">close</span></md-icon>
+                    </md-icon-button>
+                </div>
+
+                <form onSubmit={handleAddChapter} className="flex-col gap-6">
+                    <div className="flex-row gap-4" style={{ alignItems: 'center' }}>
+                    <md-outlined-text-field
+                        label="Chapter Name"
+                        value={chapterName}
+                        onInput={(e) => setChapterName(e.target.value)}
+                        style={{ flex: 1 }}
+                    ></md-outlined-text-field>
+                    {user && !user.isAnonymous && (
+                        <md-filled-button onClick={handleImportGoogleDoc} style={{ '--md-filled-button-container-color': 'var(--md-sys-color-tertiary)' }}>
+                        <md-icon slot="icon"><span className="material-symbols-outlined">cloud_download</span></md-icon>
+                        Import
+                        </md-filled-button>
+                    )}
+                    </div>
+
+                    {linkedDoc ? (
+                    <div style={{ padding: '1.5rem', borderRadius: '1.25rem', backgroundColor: 'var(--md-sys-color-secondary-container)', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+                        <span style={{ fontWeight: 600 }}>{linkedDoc.title}</span>
+                        <md-icon-button onClick={() => setLinkedDoc(null)}><md-icon>close</md-icon></md-icon-button>
+                    </div>
+                    ) : (
+                    <md-outlined-text-field
+                        label="Chapter Content"
+                        type="textarea"
+                        rows="8"
+                        value={newContent}
+                        onInput={(e) => setNewContent(e.target.value)}
+                    ></md-outlined-text-field>
+                    )}
+
+                    <div className="flex-col gap-4">
+                    <span style={{ fontWeight: 500 }}>Narrator setup</span>
+                    {title?.ai_casting_enabled ? (
+                        <div style={{ padding: '1rem', borderRadius: '1rem', backgroundColor: 'var(--md-sys-color-primary-container)', color: 'var(--md-sys-color-on-primary-container)', display: 'flex', gap: '1rem', alignItems: 'center' }}>
+                            <md-icon><span className="material-symbols-outlined">auto_awesome</span></md-icon>
+                            <span style={{ fontSize: '0.9rem' }}>AI will automatically assign voices based on the text contents.</span>
+                        </div>
+                    ) : (
+                        <div style={{ backgroundColor: 'var(--md-sys-color-surface-container-low)', padding: '1rem', borderRadius: '1rem' }}>
+                            <div className="flex-row" style={{ justifyContent: 'space-between', alignItems: 'center', marginBottom: '1rem' }}>
+                                <span style={{ fontSize: '0.9rem' }}>Selected: {voices.find(v => v.id === selectedVoice)?.name}</span>
+                                <md-text-button onClick={() => setIsChangingVoice(true)}>Change</md-text-button>
+                            </div>
+                        </div>
+                    )}
+                    </div>
+
+                    <md-filled-button 
+                    type="submit" 
+                    disabled={!chapterName.trim() || (!newContent.trim() && !linkedDoc) || creating || (!selectedVoice && !title?.ai_casting_enabled) || undefined}
+                    style={{ height: '56px', '--md-filled-button-container-shape': '16px' }}
+                    >
+                    {creating ? 'Creating...' : 'Create Chapter'}
+                    </md-filled-button>
+                    {creating && <md-linear-progress indeterminate></md-linear-progress>}
+                </form>
+            </div>
+        </div>
+    )}
+
+    {/* Floating Action Button */}
+    <div style={{ position: 'fixed', bottom: '2.5rem', right: '2.5rem', zIndex: 1000, display: 'flex' }}>
+        <md-fab 
+            onClick={() => setShowAddDialog(true)}
+            label="Add Chapter"
+            variant="primary"
+        >
+            <md-icon slot="icon"><span className="material-symbols-outlined">add</span></md-icon>
+        </md-fab>
+    </div>
+    </>
   );
 }

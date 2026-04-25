@@ -13,7 +13,7 @@ export default function Home() {
   const [editingId, setEditingId] = useState(null);
   const [editName, setEditName] = useState('');
   const [deleteId, setDeleteId] = useState(null);
-  
+
   const navigate = useNavigate();
   const { user, getToken } = useAuth();
 
@@ -35,7 +35,7 @@ export default function Home() {
         const dateB = b.created_at?.toDate ? b.created_at.toDate() : new Date(b.created_at || 0);
         return dateB - dateA;
       });
-      
+
       setTitles(data);
       setLoading(false);
     }, (error) => {
@@ -83,41 +83,41 @@ export default function Home() {
   return (
     <div className="flex-col gap-8">
       {/* Create Section */}
-      <section className="surface-container animate-fade-in" style={{ 
-        display: 'flex', 
-        flexDirection: 'column', 
+      <section className="surface-container animate-fade-in" style={{
+        display: 'flex',
+        flexDirection: 'column',
         gap: '1.5rem',
         backgroundColor: 'var(--md-sys-color-surface-container-low)',
         border: '1px solid var(--md-sys-color-outline-variant)'
       }}>
         <h2 style={{ fontSize: '1.25rem', color: 'var(--md-sys-color-on-surface)', fontWeight: 400 }}>Create New Book</h2>
-        <form onSubmit={handleCreate} style={{ display: 'flex', gap: '1.5rem', alignItems: 'center' }}>
+        <form onSubmit={handleCreate} style={{ display: 'flex', gap: '1.5rem', alignItems: 'center', flexFlow: 'wrap' }}>
           <md-filled-text-field
             label="Book Title"
             value={newTitleName}
             onInput={(e) => setNewTitleName(e.target.value)}
-            style={{ flex: 1 }}
+            style={{ flex: '1 0 280px' }}
           ></md-filled-text-field>
-          
+
           <div style={{ display: 'flex', alignItems: 'center', gap: '1.25rem', backgroundColor: 'var(--md-sys-color-surface-container-high)', padding: '0.5rem 1rem 0.5rem 0.75rem', borderRadius: '1rem', border: '1px solid var(--md-sys-color-outline-variant)' }}>
-              <div style={{ display: 'flex', alignItems: 'center', gap: '0.25rem' }}>
-                  <span style={{ fontSize: '0.875rem', fontWeight: 500, color: 'var(--md-sys-color-on-surface)' }}>AI Casting</span>
-                  <div className="tooltip-parent">
-                    <md-icon-button style={{ '--md-icon-button-icon-size': '18px', width: '32px', height: '32px' }} type="button">
-                        <md-icon><span className="material-symbols-outlined" style={{ fontSize: '18px', opacity: 0.7 }}>info</span></md-icon>
-                    </md-icon-button>
-                    <div className="tooltip-box">
-                      Analyzes text to identify characters and assign consistent voices automatically.
-                    </div>
-                  </div>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '0.25rem' }}>
+              <span style={{ fontSize: '0.875rem', fontWeight: 500, color: 'var(--md-sys-color-on-surface)' }}>AI Casting</span>
+              <div className="tooltip-parent">
+                <md-icon-button style={{ '--md-icon-button-icon-size': '18px', width: '32px', height: '32px' }} type="button">
+                  <md-icon><span className="material-symbols-outlined" style={{ fontSize: '18px', opacity: 0.7 }}>info</span></md-icon>
+                </md-icon-button>
+                <div className="tooltip-box">
+                  Analyzes text to identify characters and assign consistent voices automatically.
+                </div>
               </div>
-              <md-switch 
-                selected={aiCastingEnabled || undefined} 
-                onClick={() => setAiCastingEnabled(!aiCastingEnabled)}
-              ></md-switch>
+            </div>
+            <md-switch
+              selected={aiCastingEnabled || undefined}
+              onClick={() => setAiCastingEnabled(!aiCastingEnabled)}
+            ></md-switch>
           </div>
 
-          <md-filled-button type="submit" disabled={!newTitleName.trim() || undefined} style={{ height: '56px' }}>
+          <md-filled-button type="submit" disabled={!newTitleName.trim() || undefined} style={{ height: '56px', flex: '1 0 100%' }}>
             <md-icon slot="icon"><span className="material-symbols-outlined">add</span></md-icon>
             Create
           </md-filled-button>
@@ -127,9 +127,9 @@ export default function Home() {
       {/* Library Section */}
       <section className="animate-fade-in" style={{ animationDelay: '0.1s' }}>
         <h2 style={{ fontSize: '1.25rem', color: 'var(--md-sys-color-on-surface)', marginBottom: '1.5rem', fontWeight: 400, paddingLeft: '0.5rem' }}>Library</h2>
-        
+
         {loading ? (
-             <md-linear-progress indeterminate style={{ width: '100%', borderRadius: '4px' }}></md-linear-progress>
+          <md-linear-progress indeterminate style={{ width: '100%', borderRadius: '4px' }}></md-linear-progress>
         ) : titles.length === 0 ? (
           <div style={{ textAlign: 'center', padding: '4rem 2rem', color: 'var(--md-sys-color-on-surface-variant)', backgroundColor: 'var(--md-sys-color-surface-container-lowest)', borderRadius: '1.5rem' }}>
             <md-icon style={{ fontSize: '64px', opacity: 0.3, marginBottom: '1.5rem' }}>
@@ -146,20 +146,20 @@ export default function Home() {
                     <div slot="headline">Delete "{title.name}"?</div>
                     <div slot="supporting-text">All chapters and audio files will be removed. This cannot be undone.</div>
                     <div slot="end" style={{ display: 'flex', gap: '0.5rem' }}>
-                      <md-filled-button onClick={() => handleDelete(title.id)} style={{'--md-filled-button-container-color': 'var(--danger-color)', '--md-filled-button-label-text-color': 'white'}}>Confirm</md-filled-button>
+                      <md-filled-button onClick={() => handleDelete(title.id)} style={{ '--md-filled-button-container-color': 'var(--danger-color)', '--md-filled-button-label-text-color': 'white' }}>Confirm</md-filled-button>
                       <md-outlined-button onClick={() => setDeleteId(null)}>Cancel</md-outlined-button>
                     </div>
                   </md-list-item>
                 ) : (
-                  <md-list-item 
-                    type="button" 
+                  <md-list-item
+                    type="button"
                     onClick={() => editingId !== title.id && navigate(`/title/${title.id}`)}
-                    style={{'--md-list-item-label-text-color': 'var(--md-sys-color-on-surface)'}}
+                    style={{ '--md-list-item-label-text-color': 'var(--md-sys-color-on-surface)' }}
                   >
                     <md-icon slot="start">
                       <span className="material-symbols-outlined">book</span>
                     </md-icon>
-                    
+
                     {editingId === title.id ? (
                       <div slot="headline" style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', padding: '0.5rem 0' }} onClick={(e) => e.stopPropagation()}>
                         <md-outlined-text-field

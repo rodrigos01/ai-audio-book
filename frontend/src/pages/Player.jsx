@@ -373,9 +373,9 @@ export default function Player() {
             </div>
           </div>
 
-          <div className="flex-row items-center justify-between w-full" style={{ marginTop: '1rem' }}>
-            {/* Volume Control */}
-            <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', width: '160px' }}>
+          <div className="flex-row items-center justify-center w-full" style={{ marginTop: '1rem', position: 'relative', minHeight: '80px' }}>
+            {/* Volume Control - Hidden on Mobile */}
+            <div className="mobile-hide" style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', width: '160px', position: 'absolute', left: 0 }}>
               <md-icon style={{ color: 'var(--md-sys-color-on-surface-variant)', fontSize: '24px' }}>
                 <span className="material-symbols-outlined">
                   {volume === 0 ? 'volume_off' : volume < 0.5 ? 'volume_down' : 'volume_up'}
@@ -391,7 +391,7 @@ export default function Player() {
             </div>
 
             {/* Play/Pause Button */}
-            <div style={{ display: 'flex', alignItems: 'center', gap: '1rem' }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '1rem', zIndex: 1 }}>
                 <md-filled-icon-button 
                    onClick={togglePlay} 
                    style={{ 
@@ -407,9 +407,6 @@ export default function Player() {
                   </md-icon>
                 </md-filled-icon-button>
             </div>
-
-            {/* Spacer for symmetry */}
-            <div style={{ width: '160px' }}></div>
           </div>
         </div>
 

@@ -29,7 +29,7 @@ function App() {
         </header>
 
         {/* Main Content */}
-        <main className="app-container animate-fade-in flex-1">
+        <main className="app-container flex-1">
           <Routes>
             <Route path="/" element={<Home />} />
             <Route path="/title/:id" element={<TitleDetail />} />
