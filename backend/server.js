@@ -137,10 +137,20 @@ function breakContentIntoSections(content) {
 async function deleteChapterSections(chapterId) {
   try {
     const sections = await db.getSections(chapterId);
-    if (sections.length === 0) return;
 
     const admin = require('./firebase-config');
     const batch = admin.firestore().batch();
+
+    // Bump so clients with an offline-downloaded copy of this chapter's audio
+    // know it's stale (the audio no longer matches the chapter's content/voice).
+    batch.update(admin.firestore().collection('chapters').doc(chapterId), {
+      audio_version: admin.firestore.FieldValue.increment(1)
+    });
+
+    if (sections.length === 0) {
+      await batch.commit();
+      return;
+    }
 
     sections.forEach(s => {
       // Delete from DB

@@ -2,6 +2,8 @@ import { useEffect, useState, useRef, useCallback } from 'react';
 import { useParams, Link } from 'react-router-dom';
 import { api } from '../lib/api';
 import { useAuth } from '../context/AuthContext';
+import { useDownloads } from '../context/DownloadsContext';
+import * as offlineStorage from '../lib/offlineStorage';
 import { db } from '../lib/firebase';
 import { doc, collection, query, where, getDoc, getDocs, orderBy } from 'firebase/firestore';
 
@@ -9,8 +11,10 @@ export default function Player() {
   const { chapterId } = useParams();
   const audioRef = useRef(null);
   const sliderRef = useRef(null);
+  const offlineUrlRef = useRef(null);
   const { user, getToken, loading: authLoading } = useAuth();
-  
+  const { downloads, startDownload, removeDownload } = useDownloads();
+
   const [isPlaying, setIsPlaying] = useState(false);
   const [duration, setDuration] = useState(0);
   const [currentTime, setCurrentTime] = useState(0);
@@ -24,12 +28,18 @@ export default function Player() {
   const [authToken, setAuthToken] = useState(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
+  const [isOfflinePlayback, setIsOfflinePlayback] = useState(false);
+  const [offlineUrl, setOfflineUrl] = useState(null);
 
   const currentSection = chapter?.sections?.[currentSectionIndex];
   const totalDuration = chapter?.estimated_duration_seconds || duration;
   const displayCurrentTime = isScrubbing ? scrubTime : (currentSection?.estimated_start_time || 0) + currentTime;
 
   const handleSeekTo = (targetTime) => {
+    if (isOfflinePlayback) {
+      if (audioRef.current) audioRef.current.currentTime = targetTime;
+      return;
+    }
     if (!chapter?.sections) return;
 
     // Find the section that covers the target time
@@ -56,69 +66,101 @@ export default function Player() {
   };
 
   const loadChapter = useCallback(async () => {
-    if (!user || !chapterId) return;
-    
+    if (!chapterId) return;
+
+    setLoading(true);
+    setError(null);
+
+    // Look up an in-app offline copy first — cheap, and works with no network.
+    const record = await offlineStorage.getDownload(chapterId).catch(() => null);
+
+    let chapterData = null;
+    let titleData = null;
+    let sectionsWithTime = null;
+    let totalEst = 0;
+    let networkError = null;
+
     try {
-      setLoading(true);
-      setError(null);
+      if (!user) throw new Error('Not signed in');
       const token = await getToken();
       setAuthToken(token);
 
       // 1. Get Chapter
       const chapterRef = doc(db, 'chapters', chapterId);
       const chapterSnap = await getDoc(chapterRef);
-      
-      if (!chapterSnap.exists()) {
-        setError('Chapter not found');
-        return;
-      }
-      const chapterData = { id: chapterSnap.id, ...chapterSnap.data() };
+      if (!chapterSnap.exists()) throw new Error('Chapter not found');
+      chapterData = { id: chapterSnap.id, ...chapterSnap.data() };
 
       // 2. Get Title (for title name and permission check)
       const titleRef = doc(db, 'titles', chapterData.title_id);
       const titleSnap = await getDoc(titleRef);
-      
-      if (!titleSnap.exists()) {
-          setError('Parent book not found');
-          return;
+      if (!titleSnap.exists()) throw new Error('Parent book not found');
+      titleData = titleSnap.data();
+
+      // A downloaded copy only needs streaming section data if it's stale
+      // (audio was regenerated since it was downloaded) or missing entirely.
+      const recordMatches = record && record.audioVersion === (chapterData.audio_version ?? null);
+      if (!recordMatches) {
+        const q = query(
+          collection(db, 'chapter_sections'),
+          where('chapter_id', '==', chapterId),
+          orderBy('section_index', 'asc')
+        );
+        const sectionsSnap = await getDocs(q);
+        const sections = sectionsSnap.docs.map(d => ({ id: d.id, ...d.data() }));
+
+        let est = 0;
+        sectionsWithTime = sections.map((s) => {
+          const e = (s.content?.length || 0) / 8.1 + 0.5;
+          const startTime = est;
+          est += e;
+          return { ...s, estimated_start_time: startTime, estimated_duration: e };
+        });
+        totalEst = est;
       }
-      const titleData = titleSnap.data();
+    } catch (e) {
+      networkError = e;
+    }
 
-      // 3. Get Sections
-      const q = query(
-        collection(db, 'chapter_sections'),
-        where('chapter_id', '==', chapterId),
-        orderBy('section_index', 'asc')
-      );
-      const sectionsSnap = await getDocs(q);
-      const sections = sectionsSnap.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+    if (offlineUrlRef.current) {
+      URL.revokeObjectURL(offlineUrlRef.current);
+      offlineUrlRef.current = null;
+    }
 
-      // Calculate estimated duration & start times for each section
-      let totalEst = 0;
-      const sectionsWithTime = sections.map((s) => {
-        const est = (s.content?.length || 0) / 8.1 + 0.5;
-        const startTime = totalEst;
-        totalEst += est;
-        return { ...s, estimated_start_time: startTime, estimated_duration: est };
+    const useOffline = !!record && (!chapterData || record.audioVersion === (chapterData.audio_version ?? null));
+
+    if (useOffline) {
+      const url = URL.createObjectURL(record.blob);
+      offlineUrlRef.current = url;
+      setOfflineUrl(url);
+      setIsOfflinePlayback(true);
+      setChapter({
+        id: chapterId,
+        title_id: chapterData?.title_id ?? record.titleId,
+        name: chapterData?.name ?? record.chapterName,
+        order_index: chapterData?.order_index ?? record.orderIndex,
+        title_name: titleData?.name ?? record.titleName,
+        audio_version: chapterData?.audio_version
       });
-
+    } else if (chapterData && titleData) {
+      setOfflineUrl(null);
+      setIsOfflinePlayback(false);
       setChapter({
         ...chapterData,
         title_name: titleData.name,
         sections: sectionsWithTime,
         estimated_duration_seconds: totalEst
       });
-
-    } catch (e) {
-      console.error('Player error:', e);
-      if (e.code === 'permission-denied') {
-        setError('You do not have permission to listen to this chapter.');
-      } else {
-        setError('Failed to load player data.');
-      }
-    } finally {
-      setLoading(false);
+    } else {
+      console.error('Player error:', networkError);
+      setError(
+        networkError?.code === 'permission-denied'
+          ? 'You do not have permission to listen to this chapter.'
+          : 'Failed to load player data.'
+      );
     }
+
+    setLoading(false);
   }, [chapterId, getToken, user]);
 
   useEffect(() => {
@@ -126,6 +168,16 @@ export default function Player() {
         loadChapter();
     }
   }, [loadChapter, authLoading]);
+
+  // Revoke the object URL backing offline playback when the player unmounts.
+  useEffect(() => {
+    return () => {
+      if (offlineUrlRef.current) {
+        URL.revokeObjectURL(offlineUrlRef.current);
+        offlineUrlRef.current = null;
+      }
+    };
+  }, []);
 
   useEffect(() => {
     const audio = audioRef.current;
@@ -267,6 +319,38 @@ export default function Player() {
     setVolume(vol);
   };
 
+  const renderDownloadButton = () => {
+    if (!chapter) return null;
+    const dl = downloads[chapter.id];
+    const status = dl?.status || 'none';
+    const isStale = status === 'downloaded' && chapter.audio_version != null && dl.audioVersion != null && dl.audioVersion !== chapter.audio_version;
+
+    if (status === 'downloading') {
+      return <md-circular-progress indeterminate style={{ '--md-circular-progress-size': '24px' }}></md-circular-progress>;
+    }
+
+    if (status === 'downloaded' && !isStale) {
+      return (
+        <md-icon-button onClick={() => removeDownload(chapter.id)} title="Downloaded for offline listening — tap to remove">
+          <md-icon style={{ color: 'var(--md-sys-color-tertiary)', fontSize: '24px' }}>
+            <span className="material-symbols-outlined">download_done</span>
+          </md-icon>
+        </md-icon-button>
+      );
+    }
+
+    return (
+      <md-icon-button
+        onClick={async () => { const token = await getToken(); await startDownload(chapter, chapter.title_name, token); }}
+        title={isStale ? 'Chapter audio was updated — tap to re-download' : 'Download for offline listening'}
+      >
+        <md-icon style={{ color: 'var(--md-sys-color-on-surface-variant)', fontSize: '24px' }}>
+          <span className="material-symbols-outlined">download</span>
+        </md-icon>
+      </md-icon-button>
+    );
+  };
+
   const formatTime = (time) => {
     if (isNaN(time)) return "0:00";
     const mins = Math.floor(time / 60);
@@ -392,10 +476,10 @@ export default function Player() {
 
             {/* Play/Pause Button */}
             <div style={{ display: 'flex', alignItems: 'center', gap: '1rem', zIndex: 1 }}>
-                <md-filled-icon-button 
-                   onClick={togglePlay} 
-                   style={{ 
-                     '--md-filled-icon-button-container-width': '80px', 
+                <md-filled-icon-button
+                   onClick={togglePlay}
+                   style={{
+                     '--md-filled-icon-button-container-width': '80px',
                      '--md-filled-icon-button-container-height': '80px',
                      '--md-filled-icon-button-icon-size': '40px'
                    }}
@@ -407,14 +491,29 @@ export default function Player() {
                   </md-icon>
                 </md-filled-icon-button>
             </div>
+
+            {/* Download Control */}
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'flex-end', width: '160px', position: 'absolute', right: 0 }}>
+              {renderDownloadButton()}
+            </div>
           </div>
         </div>
 
-        {chapter && !loading && (
-          <audio 
-            ref={audioRef} 
+        {chapter && !loading && isOfflinePlayback && (
+          <audio
+            ref={audioRef}
+            key={`offline-${chapterId}`}
+            autoPlay
+            preload="auto"
+            src={offlineUrl}
+            style={{ display: 'none' }}
+          />
+        )}
+        {chapter && !loading && !isOfflinePlayback && (
+          <audio
+            ref={audioRef}
             key={`${chapterId}-${currentSectionIndex}-${authToken}`}
-            autoPlay 
+            autoPlay
             preload="auto"
             style={{ display: 'none' }}
           >
@@ -422,10 +521,10 @@ export default function Player() {
           </audio>
         )}
 
-        <div style={{ 
-          marginTop: '3.5rem', 
-          padding: '1.25rem 2rem', 
-          backgroundColor: 'var(--md-sys-color-surface-container-low)', 
+        <div style={{
+          marginTop: '3.5rem',
+          padding: '1.25rem 2rem',
+          backgroundColor: 'var(--md-sys-color-surface-container-low)',
           borderRadius: '1.25rem',
           fontSize: '0.85rem',
           color: 'var(--md-sys-color-on-surface-variant)',
@@ -435,9 +534,13 @@ export default function Player() {
           lineHeight: '1.5'
         }}>
           <md-icon style={{ fontSize: '20px', color: 'var(--md-sys-color-primary)', flexShrink: 0 }}>
-            <span className="material-symbols-outlined">info</span>
+            <span className="material-symbols-outlined">{isOfflinePlayback ? 'offline_pin' : 'info'}</span>
           </md-icon>
-          <span>Audio is generated dynamically using Google Cloud TTS. Chapters are split into sections and converted on-the-fly for a seamless listening experience.</span>
+          <span>
+            {isOfflinePlayback
+              ? 'Playing from your downloaded copy — works without an internet connection.'
+              : 'Audio is generated dynamically using Google Cloud TTS. Chapters are split into sections and converted on-the-fly for a seamless listening experience.'}
+          </span>
         </div>
       </div>
     </div>
