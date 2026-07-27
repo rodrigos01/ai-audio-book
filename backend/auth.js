@@ -1,9 +1,10 @@
 const admin = require('./firebase-config');
 
 const authMiddleware = async (req, res, next) => {
+
   let idToken = null;
   const authHeader = req.headers.authorization;
-  
+
   if (authHeader && authHeader.startsWith('Bearer ')) {
     idToken = authHeader.split('Bearer ')[1];
   } else if (req.query.token) {

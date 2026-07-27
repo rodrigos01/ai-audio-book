@@ -1,0 +1,73 @@
+steps:
+  # Step 1: Get backend service URL
+  - name: 'gcr.io/cloud-builders/gcloud'
+    entrypoint: 'bash'
+    args:
+      - '-c'
+      - |
+        BACKEND_URL=$$(gcloud run services describe ai-audio-book-api --platform managed --region us-central1 --format="value(status.url)")
+        echo "$$BACKEND_URL" > backend_url.txt
+        echo "Backend URL is: $$BACKEND_URL"
+
+  # Step 2: Build the Frontend Docker image using retrieved backend URL
+  - name: 'gcr.io/cloud-builders/docker'
+    entrypoint: 'bash'
+    args:
+      - '-c'
+      - |
+        BACKEND_URL=$$(cat backend_url.txt)
+        docker build \
+          -t gcr.io/$PROJECT_ID/ai-audio-book \
+          -f frontend/Dockerfile \
+          --build-arg VITE_FIREBASE_API_KEY=${_VITE_FIREBASE_API_KEY} \
+          --build-arg VITE_FIREBASE_AUTH_DOMAIN=${_VITE_FIREBASE_AUTH_DOMAIN} \
+          --build-arg VITE_FIREBASE_PROJECT_ID=${_VITE_FIREBASE_PROJECT_ID} \
+          --build-arg VITE_FIREBASE_STORAGE_BUCKET=${_VITE_FIREBASE_STORAGE_BUCKET} \
+          --build-arg VITE_FIREBASE_MESSAGING_SENDER_ID=${_VITE_FIREBASE_MESSAGING_SENDER_ID} \
+          --build-arg VITE_FIREBASE_APP_ID=${_VITE_FIREBASE_APP_ID} \
+          --build-arg VITE_GOOGLE_CLIENT_ID=${_VITE_GOOGLE_CLIENT_ID} \
+          --build-arg VITE_API_BASE_URL=$$BACKEND_URL/api \
+          .
+
+  # Step 3: Push the Frontend image
+  - name: 'gcr.io/cloud-builders/docker'
+    args: ['push', 'gcr.io/$PROJECT_ID/ai-audio-book']
+
+  # Step 4: Deploy Frontend to Cloud Run (original user-facing service)
+  - name: 'gcr.io/cloud-builders/gcloud'
+    args:
+      - 'run'
+      - 'deploy'
+      - 'ai-audio-book'
+      - '--image'
+      - 'gcr.io/$PROJECT_ID/ai-audio-book'
+      - '--region'
+      - 'us-central1'
+      - '--platform'
+      - 'managed'
+      - '--allow-unauthenticated'
+
+  # Step 5: Update Backend CORS to frontend URL
+  - name: 'gcr.io/cloud-builders/gcloud'
+    entrypoint: 'bash'
+    args:
+      - '-c'
+      - |
+        FRONTEND_URL=$$(gcloud run services describe ai-audio-book --platform managed --region us-central1 --format="value(status.url)")
+        echo "Updating CORS allowed origin on backend to: $$FRONTEND_URL"
+        gcloud run services update ai-audio-book-api \
+          --platform managed \
+          --region us-central1 \
+          --update-env-vars ALLOWED_ORIGINS=$$FRONTEND_URL
+
+options:
+  logging: CLOUD_LOGGING_ONLY
+
+substitutions:
+  _VITE_FIREBASE_API_KEY: ''
+  _VITE_FIREBASE_AUTH_DOMAIN: ''
+  _VITE_FIREBASE_PROJECT_ID: ''
+  _VITE_FIREBASE_STORAGE_BUCKET: ''
+  _VITE_FIREBASE_MESSAGING_SENDER_ID: ''
+  _VITE_FIREBASE_APP_ID: ''
+  _VITE_GOOGLE_CLIENT_ID: ''

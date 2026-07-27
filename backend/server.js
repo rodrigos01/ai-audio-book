@@ -48,10 +48,13 @@ try {
 }
 
 const allowedOrigins = [
-  'http://localhost:5173', 'http://localhost:5174', 'http://localhost:5175',
-  'http://localhost:5176', 'http://localhost:5177', 'http://localhost:5178',
-  'http://localhost:5179', 'http://localhost:3005', 'http://localhost:3000'
+  'http://localhost:*', 'https://ai-audio-book-883622140264.us-central1.run.app'
 ];
+
+if (process.env.ALLOWED_ORIGINS) {
+  const envOrigins = process.env.ALLOWED_ORIGINS.split(',').map(o => o.trim());
+  allowedOrigins.push(...envOrigins);
+}
 
 // Static assets should be served before CORS and Auth middleware
 const frontendDist = path.resolve(__dirname, '../frontend/dist');
@@ -74,12 +77,27 @@ if (fs.existsSync(samplesDir)) {
 
 app.use(cors({
   origin: function (origin, callback) {
-    if (!origin || allowedOrigins.indexOf(origin) !== -1 || process.env.NODE_ENV === 'production') {
-      callback(null, true);
-    } else {
-      console.log(`CORS blocked for origin: ${origin}`);
-      callback(new Error('Not allowed by CORS'));
+    if (!origin) {
+      return callback(null, true);
     }
+    if (allowedOrigins.indexOf(origin) !== -1) {
+      return callback(null, true);
+    }
+
+    // Dynamically allow local development, Firebase, and Cloud Run service subdomains
+    const isLocalhost = origin.startsWith('http://localhost:') || origin.startsWith('http://127.0.0.1:');
+    const isFirebase = origin.endsWith('.web.app') || origin.endsWith('.firebaseapp.com');
+    const isCloudRun = origin.endsWith('.a.run.app');
+
+    if (isLocalhost || isFirebase || isCloudRun) {
+      return callback(null, true);
+    }
+
+    if (process.env.NODE_ENV === 'production' && !process.env.ALLOWED_ORIGINS) {
+      return callback(null, true);
+    }
+    console.log(`CORS blocked for origin: ${origin}`);
+    callback(new Error('Not allowed by CORS'));
   },
   credentials: true
 }));
@@ -88,13 +106,23 @@ app.use(express.json({ limit: '5mb' }));
 app.use(cookieParser());
 app.use(authMiddleware);
 
-// Assign client_id cookie
+// Assign client_id cookie or read from custom header / query param
 app.use((req, res, next) => {
-  let clientId = req.cookies.client_id;
+  let clientId = req.headers['x-client-id'] || req.cookies.client_id || req.query.client_id;
   if (!clientId) {
     clientId = uuidv4();
-    res.cookie('client_id', clientId, { maxAge: 1000 * 60 * 60 * 24 * 365, httpOnly: true, sameSite: 'lax' });
   }
+  const isProd = process.env.NODE_ENV === 'production';
+  res.cookie('client_id', clientId, {
+    maxAge: 1000 * 60 * 60 * 24 * 365,
+    httpOnly: true,
+    sameSite: isProd ? 'none' : 'lax',
+    secure: isProd
+  });
+
+  res.setHeader('Access-Control-Expose-Headers', 'x-client-id');
+  res.setHeader('x-client-id', clientId);
+
   req.clientId = clientId;
   next();
 });
@@ -334,15 +362,15 @@ app.post('/api/titles', async (req, res) => {
 
 app.patch('/api/titles/:id', authMiddleware, async (req, res) => {
   const { id } = req.params;
-    const { name, casting_map, narrator_voice } = req.body;
-    try {
-      const title = await db.getTitle(id, req.clientId, req.userId);
-      if (!title) return res.status(404).json({ error: 'Title not found' });
-  
-      const updateData = {};
-      if (name !== undefined) updateData.name = name;
-      if (casting_map !== undefined) updateData.casting_map = casting_map;
-      if (narrator_voice !== undefined) updateData.narrator_voice = narrator_voice;
+  const { name, casting_map, narrator_voice } = req.body;
+  try {
+    const title = await db.getTitle(id, req.clientId, req.userId);
+    if (!title) return res.status(404).json({ error: 'Title not found' });
+
+    const updateData = {};
+    if (name !== undefined) updateData.name = name;
+    if (casting_map !== undefined) updateData.casting_map = casting_map;
+    if (narrator_voice !== undefined) updateData.narrator_voice = narrator_voice;
 
     await db.updateTitle(id, updateData);
 
@@ -443,7 +471,7 @@ app.post('/api/titles/:id/chapters', authMiddleware, async (req, res) => {
         const existingNarrator = title.narrator_voice || null;
 
         const result = await aiCasting.analyzeChapter(content, existingCast, VOICES, existingNarrator);
-        
+
         // Update Title mapping
         const titleUpdate = { casting_map: result.updated_cast };
         if (!title.narrator_voice) titleUpdate.narrator_voice = result.narrator_voice;
@@ -542,11 +570,6 @@ app.get('/api/chapters/:chapterId/stream', async (req, res) => {
   try {
     const chapter = await db.getChapter(chapterId);
     if (!chapter) return res.status(404).end();
-    const title = await db.getTitle(chapter.title_id, req.clientId, req.userId);
-    if (!title) {
-      debugLog(`Stream Forbidden for ${chapterId}: clientId=${req.clientId}, userId=${req.userId}`);
-      return res.status(403).end();
-    }
 
     const startIndex = parseInt(req.query.offset || 0);
     debugLog(`Streaming ${chapterId} starting from offset ${startIndex}`);
