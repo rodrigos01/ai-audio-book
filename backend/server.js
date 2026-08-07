@@ -87,7 +87,9 @@ app.use(cors({
     // Dynamically allow local development, Firebase, and Cloud Run service subdomains
     const isLocalhost = origin.startsWith('http://localhost:') || origin.startsWith('http://127.0.0.1:');
     const isFirebase = origin.endsWith('.web.app') || origin.endsWith('.firebaseapp.com');
-    const isCloudRun = origin.endsWith('.a.run.app');
+    // Covers both the legacy hash-based URLs (*.a.run.app) and the newer
+    // default URL format (SERVICE-PROJECTNUMBER.REGION.run.app).
+    const isCloudRun = origin.endsWith('.run.app');
 
     if (isLocalhost || isFirebase || isCloudRun) {
       return callback(null, true);
