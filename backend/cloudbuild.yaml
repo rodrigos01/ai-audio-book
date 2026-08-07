@@ -11,9 +11,7 @@ steps:
           PREFIX="$BRANCH_NAME-"
         fi
         echo "$${PREFIX}ai-audio-book-api" > backend_service.txt
-        echo "$${PREFIX}ai-audio-book-generate-samples" > job_service.txt
         echo "Backend service: $$(cat backend_service.txt)"
-        echo "Job service: $$(cat job_service.txt)"
 
   # Step 2: Download the service account key from GCS
   - name: 'gcr.io/cloud-builders/gsutil'
@@ -52,28 +50,36 @@ steps:
 
   # Step 6: Deploy Sample Generation Job
   - name: 'gcr.io/cloud-builders/gcloud'
-    entrypoint: 'bash'
     args:
-      - '-c'
-      - |
-        JOB_SERVICE=$$(cat job_service.txt)
-        gcloud run jobs deploy "$$JOB_SERVICE" \
-          --image gcr.io/$PROJECT_ID/ai-audio-book-api \
-          --region us-central1 \
-          --command node \
-          --args scripts/generate_samples.js \
-          --add-volume name=storage-volume,type=cloud-storage,bucket=ai-audio-book-storage-ai-audio-book \
-          --add-volume-mount volume=storage-volume,mount-path=/app/storage \
-          --update-env-vars STORAGE_BASE_PATH=/app/storage,GOOGLE_APPLICATION_CREDENTIALS=/app/backend/ai-audio-book-key.json,NODE_ENV=production,GOOGLE_CLOUD_PROJECT=$PROJECT_ID,GEMINI_API_KEY=${_GEMINI_API_KEY}
+      - 'run'
+      - 'jobs'
+      - 'deploy'
+      - 'ai-audio-book-generate-samples'
+      - '--image'
+      - 'gcr.io/$PROJECT_ID/ai-audio-book-api'
+      - '--region'
+      - 'us-central1'
+      - '--command'
+      - 'node'
+      - '--args'
+      - 'scripts/generate_samples.js'
+      - '--add-volume'
+      - 'name=storage-volume,type=cloud-storage,bucket=ai-audio-book-storage-ai-audio-book'
+      - '--add-volume-mount'
+      - 'volume=storage-volume,mount-path=/app/storage'
+      - '--update-env-vars'
+      - 'STORAGE_BASE_PATH=/app/storage,GOOGLE_APPLICATION_CREDENTIALS=/app/backend/ai-audio-book-key.json,NODE_ENV=production,GOOGLE_CLOUD_PROJECT=$PROJECT_ID,GEMINI_API_KEY=${_GEMINI_API_KEY}'
 
   # Step 7: Execute Sample Generation Job
   - name: 'gcr.io/cloud-builders/gcloud'
-    entrypoint: 'bash'
     args:
-      - '-c'
-      - |
-        JOB_SERVICE=$$(cat job_service.txt)
-        gcloud run jobs execute "$$JOB_SERVICE" --region us-central1 --wait
+      - 'run'
+      - 'jobs'
+      - 'execute'
+      - 'ai-audio-book-generate-samples'
+      - '--region'
+      - 'us-central1'
+      - '--wait'
 
 options:
   logging: CLOUD_LOGGING_ONLY
