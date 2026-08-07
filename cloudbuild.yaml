@@ -1,11 +1,29 @@
 steps:
-  # Step 1: Download the service account key from GCS
+  # Step 1: Compute branch-prefixed service names (master deploys unprefixed)
+  - name: 'gcr.io/cloud-builders/gcloud'
+    entrypoint: 'bash'
+    args:
+      - '-c'
+      - |
+        if [ "$BRANCH_NAME" = "master" ]; then
+          PREFIX=""
+        else
+          PREFIX="$BRANCH_NAME-"
+        fi
+        echo "$${PREFIX}ai-audio-book-api" > backend_service.txt
+        echo "$${PREFIX}ai-audio-book" > frontend_service.txt
+        echo "$${PREFIX}ai-audio-book-generate-samples" > job_service.txt
+        echo "Backend service: $$(cat backend_service.txt)"
+        echo "Frontend service: $$(cat frontend_service.txt)"
+        echo "Job service: $$(cat job_service.txt)"
+
+  # Step 2: Download the service account key from GCS
   - name: 'gcr.io/cloud-builders/gsutil'
     args: ['cp', 'gs://${_SECRETS_BUCKET}/ai-audio-book-key.json', 'backend/ai-audio-book-key.json']
 
-  # Step 2: Build the Backend Docker image
+  # Step 3: Build the Backend Docker image
   - name: 'gcr.io/cloud-builders/docker'
-    args: 
+    args:
       - 'build'
       - '-t'
       - 'gcr.io/$PROJECT_ID/ai-audio-book-api'
@@ -13,43 +31,39 @@ steps:
       - 'backend/Dockerfile'
       - '.'
 
-  # Step 3: Push the Backend image
+  # Step 4: Push the Backend image
   - name: 'gcr.io/cloud-builders/docker'
     args: ['push', 'gcr.io/$PROJECT_ID/ai-audio-book-api']
 
-  # Step 4: Deploy Backend to Cloud Run
-  - name: 'gcr.io/cloud-builders/gcloud'
-    args:
-      - 'run'
-      - 'deploy'
-      - 'ai-audio-book-api'
-      - '--image'
-      - 'gcr.io/$PROJECT_ID/ai-audio-book-api'
-      - '--region'
-      - 'us-central1'
-      - '--platform'
-      - 'managed'
-      - '--allow-unauthenticated'
-      - '--execution-environment'
-      - 'gen2'
-      - '--add-volume'
-      - 'name=storage-volume,type=cloud-storage,bucket=ai-audio-book-storage-ai-audio-book'
-      - '--add-volume-mount'
-      - 'volume=storage-volume,mount-path=/app/storage'
-      - '--update-env-vars'
-      - 'STORAGE_BASE_PATH=/app/storage,GOOGLE_APPLICATION_CREDENTIALS=/app/backend/ai-audio-book-key.json,NODE_ENV=production,GOOGLE_CLOUD_PROJECT=$PROJECT_ID,GEMINI_API_KEY=${_GEMINI_API_KEY}'
-
-  # Step 5: Get backend service URL
+  # Step 5: Deploy Backend to Cloud Run
   - name: 'gcr.io/cloud-builders/gcloud'
     entrypoint: 'bash'
     args:
       - '-c'
       - |
-        BACKEND_URL=$$(gcloud run services describe ai-audio-book-api --platform managed --region us-central1 --format="value(status.url)")
+        BACKEND_SERVICE=$$(cat backend_service.txt)
+        gcloud run deploy "$$BACKEND_SERVICE" \
+          --image gcr.io/$PROJECT_ID/ai-audio-book-api \
+          --region us-central1 \
+          --platform managed \
+          --allow-unauthenticated \
+          --execution-environment gen2 \
+          --add-volume name=storage-volume,type=cloud-storage,bucket=ai-audio-book-storage-ai-audio-book \
+          --add-volume-mount volume=storage-volume,mount-path=/app/storage \
+          --update-env-vars STORAGE_BASE_PATH=/app/storage,GOOGLE_APPLICATION_CREDENTIALS=/app/backend/ai-audio-book-key.json,NODE_ENV=production,GOOGLE_CLOUD_PROJECT=$PROJECT_ID,GEMINI_API_KEY=${_GEMINI_API_KEY}
+
+  # Step 6: Get backend service URL
+  - name: 'gcr.io/cloud-builders/gcloud'
+    entrypoint: 'bash'
+    args:
+      - '-c'
+      - |
+        BACKEND_SERVICE=$$(cat backend_service.txt)
+        BACKEND_URL=$$(gcloud run services describe "$$BACKEND_SERVICE" --platform managed --region us-central1 --format="value(status.url)")
         echo "$$BACKEND_URL" > backend_url.txt
         echo "Backend URL is: $$BACKEND_URL"
 
-  # Step 6: Build the Frontend Docker image using retrieved backend URL
+  # Step 7: Build the Frontend Docker image using retrieved backend URL
   - name: 'gcr.io/cloud-builders/docker'
     entrypoint: 'bash'
     args:
@@ -69,69 +83,62 @@ steps:
           --build-arg VITE_API_BASE_URL=$$BACKEND_URL/api \
           .
 
-  # Step 7: Push the Frontend image
+  # Step 8: Push the Frontend image
   - name: 'gcr.io/cloud-builders/docker'
     args: ['push', 'gcr.io/$PROJECT_ID/ai-audio-book']
 
-  # Step 8: Deploy Frontend to Cloud Run (original user-facing service)
-  - name: 'gcr.io/cloud-builders/gcloud'
-    args:
-      - 'run'
-      - 'deploy'
-      - 'ai-audio-book'
-      - '--image'
-      - 'gcr.io/$PROJECT_ID/ai-audio-book'
-      - '--region'
-      - 'us-central1'
-      - '--platform'
-      - 'managed'
-      - '--allow-unauthenticated'
-
-  # Step 9: Update Backend CORS to frontend URL
+  # Step 9: Deploy Frontend to Cloud Run (original user-facing service)
   - name: 'gcr.io/cloud-builders/gcloud'
     entrypoint: 'bash'
     args:
       - '-c'
       - |
-        FRONTEND_URL=$$(gcloud run services describe ai-audio-book --platform managed --region us-central1 --format="value(status.url)")
+        FRONTEND_SERVICE=$$(cat frontend_service.txt)
+        gcloud run deploy "$$FRONTEND_SERVICE" \
+          --image gcr.io/$PROJECT_ID/ai-audio-book \
+          --region us-central1 \
+          --platform managed \
+          --allow-unauthenticated
+
+  # Step 10: Update Backend CORS to frontend URL
+  - name: 'gcr.io/cloud-builders/gcloud'
+    entrypoint: 'bash'
+    args:
+      - '-c'
+      - |
+        BACKEND_SERVICE=$$(cat backend_service.txt)
+        FRONTEND_SERVICE=$$(cat frontend_service.txt)
+        FRONTEND_URL=$$(gcloud run services describe "$$FRONTEND_SERVICE" --platform managed --region us-central1 --format="value(status.url)")
         echo "Updating CORS allowed origin on backend to: $$FRONTEND_URL"
-        gcloud run services update ai-audio-book-api \
+        gcloud run services update "$$BACKEND_SERVICE" \
           --platform managed \
           --region us-central1 \
           --update-env-vars ALLOWED_ORIGINS=$$FRONTEND_URL
 
-  # Step 10: Deploy Sample Generation Job
+  # Step 11: Deploy Sample Generation Job
   - name: 'gcr.io/cloud-builders/gcloud'
+    entrypoint: 'bash'
     args:
-      - 'run'
-      - 'jobs'
-      - 'deploy'
-      - 'ai-audio-book-generate-samples'
-      - '--image'
-      - 'gcr.io/$PROJECT_ID/ai-audio-book-api'
-      - '--region'
-      - 'us-central1'
-      - '--command'
-      - 'node'
-      - '--args'
-      - 'scripts/generate_samples.js'
-      - '--add-volume'
-      - 'name=storage-volume,type=cloud-storage,bucket=ai-audio-book-storage-ai-audio-book'
-      - '--add-volume-mount'
-      - 'volume=storage-volume,mount-path=/app/storage'
-      - '--update-env-vars'
-      - 'STORAGE_BASE_PATH=/app/storage,GOOGLE_APPLICATION_CREDENTIALS=/app/backend/ai-audio-book-key.json,NODE_ENV=production,GOOGLE_CLOUD_PROJECT=$PROJECT_ID,GEMINI_API_KEY=${_GEMINI_API_KEY}'
+      - '-c'
+      - |
+        JOB_SERVICE=$$(cat job_service.txt)
+        gcloud run jobs deploy "$$JOB_SERVICE" \
+          --image gcr.io/$PROJECT_ID/ai-audio-book-api \
+          --region us-central1 \
+          --command node \
+          --args scripts/generate_samples.js \
+          --add-volume name=storage-volume,type=cloud-storage,bucket=ai-audio-book-storage-ai-audio-book \
+          --add-volume-mount volume=storage-volume,mount-path=/app/storage \
+          --update-env-vars STORAGE_BASE_PATH=/app/storage,GOOGLE_APPLICATION_CREDENTIALS=/app/backend/ai-audio-book-key.json,NODE_ENV=production,GOOGLE_CLOUD_PROJECT=$PROJECT_ID,GEMINI_API_KEY=${_GEMINI_API_KEY}
 
-  # Step 11: Execute Sample Generation Job
+  # Step 12: Execute Sample Generation Job
   - name: 'gcr.io/cloud-builders/gcloud'
+    entrypoint: 'bash'
     args:
-      - 'run'
-      - 'jobs'
-      - 'execute'
-      - 'ai-audio-book-generate-samples'
-      - '--region'
-      - 'us-central1'
-      - '--wait'
+      - '-c'
+      - |
+        JOB_SERVICE=$$(cat job_service.txt)
+        gcloud run jobs execute "$$JOB_SERVICE" --region us-central1 --wait
 
 options:
   logging: CLOUD_LOGGING_ONLY
