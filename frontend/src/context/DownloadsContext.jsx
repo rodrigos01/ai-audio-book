@@ -1,0 +1,116 @@
+import { createContext, useContext, useEffect, useRef, useState } from 'react';
+import { api } from '../lib/api';
+import * as offlineStorage from '../lib/offlineStorage';
+
+const DownloadsContext = createContext();
+
+export const useDownloads = () => useContext(DownloadsContext);
+
+export const DownloadsProvider = ({ children }) => {
+  // { [chapterId]: { status: 'none'|'downloading'|'downloaded'|'error', sizeBytes, downloadedAt, audioVersion } }
+  const [downloads, setDownloads] = useState({});
+  const abortControllers = useRef({});
+
+  useEffect(() => {
+    offlineStorage.getAllDownloads().then((records) => {
+      const initial = {};
+      for (const record of records) {
+        initial[record.chapterId] = {
+          status: 'downloaded',
+          sizeBytes: record.sizeBytes,
+          downloadedAt: record.downloadedAt,
+          audioVersion: record.audioVersion
+        };
+      }
+      setDownloads(initial);
+    }).catch((err) => {
+      console.error('Failed to load offline downloads:', err);
+    });
+  }, []);
+
+  const setStatus = (chapterId, patch) => {
+    setDownloads((prev) => ({
+      ...prev,
+      [chapterId]: { ...prev[chapterId], ...patch }
+    }));
+  };
+
+  const startDownload = async (chapter, titleName, token) => {
+    const chapterId = chapter.id;
+    if (abortControllers.current[chapterId]) return; // already in flight
+
+    const controller = new AbortController();
+    abortControllers.current[chapterId] = controller;
+    setStatus(chapterId, { status: 'downloading', sizeBytes: 0 });
+
+    try {
+      const res = await fetch(api.getStreamUrl(chapterId, 0, token), { signal: controller.signal });
+      if (!res.ok || !res.body) throw new Error('Failed to download chapter audio');
+
+      const reader = res.body.getReader();
+      const chunks = [];
+      let bytesReceived = 0;
+
+      // Transfer-Encoding: chunked has no Content-Length, so progress is a
+      // running byte count rather than a percentage.
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        chunks.push(value);
+        bytesReceived += value.byteLength;
+        setStatus(chapterId, { sizeBytes: bytesReceived });
+      }
+
+      const blob = new Blob(chunks, { type: 'audio/mpeg' });
+      const record = {
+        chapterId,
+        titleId: chapter.title_id,
+        chapterName: chapter.name || `Chapter ${chapter.order_index}`,
+        orderIndex: chapter.order_index,
+        titleName,
+        audioVersion: chapter.audio_version ?? null,
+        sizeBytes: blob.size,
+        downloadedAt: Date.now(),
+        blob
+      };
+      await offlineStorage.putDownload(record);
+
+      setStatus(chapterId, {
+        status: 'downloaded',
+        sizeBytes: record.sizeBytes,
+        downloadedAt: record.downloadedAt,
+        audioVersion: record.audioVersion
+      });
+    } catch (err) {
+      if (err.name !== 'AbortError') {
+        console.error('Chapter download failed:', err);
+        setStatus(chapterId, { status: 'error' });
+      } else {
+        setStatus(chapterId, { status: 'none' });
+      }
+    } finally {
+      delete abortControllers.current[chapterId];
+    }
+  };
+
+  const cancelDownload = (chapterId) => {
+    abortControllers.current[chapterId]?.abort();
+  };
+
+  const removeDownload = async (chapterId) => {
+    await offlineStorage.deleteDownload(chapterId);
+    setDownloads((prev) => {
+      const next = { ...prev };
+      delete next[chapterId];
+      return next;
+    });
+  };
+
+  const value = { downloads, startDownload, cancelDownload, removeDownload };
+
+  return (
+    <DownloadsContext.Provider value={value}>
+      {children}
+    </DownloadsContext.Provider>
+  );
+};
