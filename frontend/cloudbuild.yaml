@@ -1,15 +1,32 @@
 steps:
-  # Step 1: Get backend service URL
+  # Step 1: Compute branch-prefixed service names (master deploys unprefixed)
   - name: 'gcr.io/cloud-builders/gcloud'
     entrypoint: 'bash'
     args:
       - '-c'
       - |
-        BACKEND_URL=$$(gcloud run services describe ai-audio-book-api --platform managed --region us-central1 --format="value(status.url)")
+        if [ "$BRANCH_NAME" = "master" ]; then
+          PREFIX=""
+        else
+          PREFIX="$BRANCH_NAME-"
+        fi
+        echo "$${PREFIX}ai-audio-book-api" > backend_service.txt
+        echo "$${PREFIX}ai-audio-book" > frontend_service.txt
+        echo "Backend service: $$(cat backend_service.txt)"
+        echo "Frontend service: $$(cat frontend_service.txt)"
+
+  # Step 2: Get backend service URL
+  - name: 'gcr.io/cloud-builders/gcloud'
+    entrypoint: 'bash'
+    args:
+      - '-c'
+      - |
+        BACKEND_SERVICE=$$(cat backend_service.txt)
+        BACKEND_URL=$$(gcloud run services describe "$$BACKEND_SERVICE" --platform managed --region us-central1 --format="value(status.url)")
         echo "$$BACKEND_URL" > backend_url.txt
         echo "Backend URL is: $$BACKEND_URL"
 
-  # Step 2: Build the Frontend Docker image using retrieved backend URL
+  # Step 3: Build the Frontend Docker image using retrieved backend URL
   - name: 'gcr.io/cloud-builders/docker'
     entrypoint: 'bash'
     args:
@@ -29,33 +46,34 @@ steps:
           --build-arg VITE_API_BASE_URL=$$BACKEND_URL/api \
           .
 
-  # Step 3: Push the Frontend image
+  # Step 4: Push the Frontend image
   - name: 'gcr.io/cloud-builders/docker'
     args: ['push', 'gcr.io/$PROJECT_ID/ai-audio-book']
 
-  # Step 4: Deploy Frontend to Cloud Run (original user-facing service)
-  - name: 'gcr.io/cloud-builders/gcloud'
-    args:
-      - 'run'
-      - 'deploy'
-      - 'ai-audio-book'
-      - '--image'
-      - 'gcr.io/$PROJECT_ID/ai-audio-book'
-      - '--region'
-      - 'us-central1'
-      - '--platform'
-      - 'managed'
-      - '--allow-unauthenticated'
-
-  # Step 5: Update Backend CORS to frontend URL
+  # Step 5: Deploy Frontend to Cloud Run (original user-facing service)
   - name: 'gcr.io/cloud-builders/gcloud'
     entrypoint: 'bash'
     args:
       - '-c'
       - |
-        FRONTEND_URL=$$(gcloud run services describe ai-audio-book --platform managed --region us-central1 --format="value(status.url)")
+        FRONTEND_SERVICE=$$(cat frontend_service.txt)
+        gcloud run deploy "$$FRONTEND_SERVICE" \
+          --image gcr.io/$PROJECT_ID/ai-audio-book \
+          --region us-central1 \
+          --platform managed \
+          --allow-unauthenticated
+
+  # Step 6: Update Backend CORS to frontend URL
+  - name: 'gcr.io/cloud-builders/gcloud'
+    entrypoint: 'bash'
+    args:
+      - '-c'
+      - |
+        BACKEND_SERVICE=$$(cat backend_service.txt)
+        FRONTEND_SERVICE=$$(cat frontend_service.txt)
+        FRONTEND_URL=$$(gcloud run services describe "$$FRONTEND_SERVICE" --platform managed --region us-central1 --format="value(status.url)")
         echo "Updating CORS allowed origin on backend to: $$FRONTEND_URL"
-        gcloud run services update ai-audio-book-api \
+        gcloud run services update "$$BACKEND_SERVICE" \
           --platform managed \
           --region us-central1 \
           --update-env-vars ALLOWED_ORIGINS=$$FRONTEND_URL
