@@ -3,7 +3,7 @@ import { useParams, Link, useNavigate } from 'react-router-dom';
 import { api } from '../lib/api';
 import { openGooglePicker } from '../lib/googlePicker';
 import { useAuth } from '../context/AuthContext';
-import { useDownloads } from '../context/DownloadsContext';
+import { useDownloads, getDownloadProgressFraction } from '../context/DownloadsContext';
 import { db } from '../lib/firebase';
 import { doc, collection, query, where, onSnapshot, orderBy, getDoc } from 'firebase/firestore';
 
@@ -223,11 +223,12 @@ export default function TitleDetail() {
     const isStale = status === 'downloaded' && chapter.audio_version != null && dl.audioVersion != null && dl.audioVersion !== chapter.audio_version;
 
     if (status === 'preparing' || status === 'downloading') {
+      const fraction = getDownloadProgressFraction(dl) ?? 0;
       const title = status === 'preparing'
         ? (dl.total ? `Preparing audio… ${dl.progress}/${dl.total}` : 'Preparing audio…')
-        : 'Downloading…';
+        : `Downloading… ${Math.round(fraction * 100)}%`;
       return (
-        <md-circular-progress indeterminate title={title} style={{ '--md-circular-progress-size': '20px' }}></md-circular-progress>
+        <md-circular-progress value={fraction} title={title} style={{ '--md-circular-progress-size': '20px' }}></md-circular-progress>
       );
     }
 

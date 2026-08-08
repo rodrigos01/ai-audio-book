@@ -6,8 +6,27 @@ const DownloadsContext = createContext();
 
 export const useDownloads = () => useContext(DownloadsContext);
 
+// Combines both phases into a single 0-1 fraction, treating the final
+// download as one more "section" after the totalSections generated during
+// preparation - so a chapter with N sections has N+1 steps, and the last
+// one fills in smoothly as bytes actually arrive.
+export const getDownloadProgressFraction = (dl) => {
+  if (!dl) return null;
+  if (dl.status === 'preparing') {
+    return dl.total ? dl.progress / (dl.total + 1) : 0;
+  }
+  if (dl.status === 'downloading') {
+    const steps = (dl.total || 0) + 1;
+    const base = (dl.total || 0) / steps;
+    const downloadFraction = dl.expectedBytes ? Math.min(dl.sizeBytes / dl.expectedBytes, 1) : 0;
+    return base + downloadFraction / steps;
+  }
+  if (dl.status === 'downloaded') return 1;
+  return null;
+};
+
 export const DownloadsProvider = ({ children }) => {
-  // { [chapterId]: { status: 'none'|'preparing'|'downloading'|'downloaded'|'error', progress, total, sizeBytes, downloadedAt, audioVersion } }
+  // { [chapterId]: { status: 'none'|'preparing'|'downloading'|'downloaded'|'error', progress, total, sizeBytes, expectedBytes, downloadedAt, audioVersion } }
   const [downloads, setDownloads] = useState({});
   const abortControllers = useRef({});
 
@@ -51,9 +70,11 @@ export const DownloadsProvider = ({ children }) => {
       let ready = false;
       let lastGenerated = -1;
       let stallRounds = 0;
+      let expectedBytes = null;
       while (!ready) {
         const data = await api.prepareChapterDownload(chapterId, token, controller.signal);
         ready = data.ready;
+        expectedBytes = data.totalBytes ?? null;
         setStatus(chapterId, { status: 'preparing', progress: data.generatedSections, total: data.totalSections });
 
         if (!ready) {
@@ -64,7 +85,7 @@ export const DownloadsProvider = ({ children }) => {
       }
 
       // Phase 2: everything is cached now, so this should be a fast read+transfer.
-      setStatus(chapterId, { status: 'downloading', sizeBytes: 0 });
+      setStatus(chapterId, { status: 'downloading', sizeBytes: 0, expectedBytes });
       const res = await fetch(api.getStreamUrl(chapterId, 0, token), { signal: controller.signal });
       if (!res.ok || !res.body) throw new Error('Failed to download chapter audio');
 
