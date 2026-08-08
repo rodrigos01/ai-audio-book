@@ -170,12 +170,78 @@ async function deleteChapterSections(chapterId) {
   }
 }
 
+// Google Cloud TTS rejects any request over 5000 bytes of input; stay
+// comfortably under that.
+const MAX_SSML_BYTES = 4500;
+
 function splitSSMLIntoSections(ssml) {
   // Strip outer <speak> if present
   let clean = ssml.replace(/^<speak>\s*/i, '').replace(/\s*<\/speak>$/i, '');
   // Split by </p>
-  const parts = clean.split(/<\/p>/i).map(p => p.trim()).filter(p => p.length > 0);
-  return parts.map(p => `<speak>${p}</p></speak>`);
+  const paragraphs = clean.split(/<\/p>/i)
+    .map(p => p.trim())
+    .filter(p => p.length > 0)
+    .map(p => `${p}</p>`);
+
+  const sections = [];
+  for (const paragraph of paragraphs) {
+    if (Buffer.byteLength(paragraph, 'utf8') <= MAX_SSML_BYTES) {
+      sections.push(`<speak>${paragraph}</speak>`);
+    } else {
+      for (const chunk of splitLongSsmlParagraph(paragraph, MAX_SSML_BYTES)) {
+        sections.push(`<speak>${chunk}</speak>`);
+      }
+    }
+  }
+  return sections;
+}
+
+// Splits a <p>...</p> block too large for a single TTS request into smaller
+// <p>...</p> chunks, without ever breaking inside a tag. AI-casted SSML
+// wraps each character's dialogue in <voice>...</voice>, so splitting right
+// after a </voice> close is always safe; plain narration with no voice
+// tags falls back to sentence boundaries; a raw byte split is the last
+// resort so a single pathological paragraph can never block the whole
+// chapter from preparing.
+function splitLongSsmlParagraph(pBlock, maxBytes) {
+  const match = pBlock.match(/^<p([^>]*)>([\s\S]*)<\/p>$/i);
+  if (!match) return hardSplitByBytes(pBlock, maxBytes);
+  const [, pAttrs, inner] = match;
+
+  let pieces = inner.split(/(?<=<\/voice>)/i);
+  if (pieces.length <= 1) {
+    pieces = inner.split(/(?<=[.!?])\s+(?![^<]*>)/);
+  }
+
+  const chunks = [];
+  let current = '';
+  for (const piece of pieces) {
+    const candidate = current + piece;
+    if (current && Buffer.byteLength(`<p${pAttrs}>${candidate}</p>`, 'utf8') > maxBytes) {
+      chunks.push(`<p${pAttrs}>${current}</p>`);
+      current = piece;
+    } else {
+      current = candidate;
+    }
+  }
+  if (current.trim()) chunks.push(`<p${pAttrs}>${current}</p>`);
+
+  return chunks.flatMap(chunk =>
+    Buffer.byteLength(chunk, 'utf8') <= maxBytes ? [chunk] : hardSplitByBytes(chunk, maxBytes)
+  );
+}
+
+function hardSplitByBytes(text, maxBytes) {
+  const chunks = [];
+  let remaining = text;
+  while (Buffer.byteLength(remaining, 'utf8') > maxBytes) {
+    let cut = maxBytes;
+    while (cut > 0 && Buffer.byteLength(remaining.slice(0, cut), 'utf8') > maxBytes) cut--;
+    chunks.push(remaining.slice(0, cut));
+    remaining = remaining.slice(cut);
+  }
+  if (remaining) chunks.push(remaining);
+  return chunks;
 }
 
 // Google Docs Parser
@@ -556,8 +622,8 @@ function escapeXml(unsafe) {
 }
 
 // Synthesizes a section's audio via TTS and caches it to disk + Firestore.
-// Returns the audio buffer on success, or null if synthesis failed (logged,
-// not thrown, so callers can decide how to handle a single failed section).
+// Returns the audio buffer on success, or throws so callers can decide how
+// to handle a single failed section (and, for /prepare, surface why).
 async function synthesizeAndCacheSection(chapter, section, localPath) {
   const ssmlContent = chapter.is_ssml
     // Section content is already valid SSML (including <speak> tags from splitSSMLIntoSections)
@@ -569,18 +635,13 @@ async function synthesizeAndCacheSection(chapter, section, localPath) {
     voice: { languageCode: 'en-US', name: chapter.voice_id || 'en-US-Chirp3-HD-Aoede' },
     audioConfig: { audioEncoding: 'MP3' },
   };
-  try {
-    debugLog(`Generating audio for ${section.id}`);
-    const [response] = await ttsClient.synthesizeSpeech(request);
-    const audioBuffer = response.audioContent;
+  debugLog(`Generating audio for ${section.id}`);
+  const [response] = await ttsClient.synthesizeSpeech(request);
+  const audioBuffer = response.audioContent;
 
-    fs.writeFileSync(localPath, audioBuffer);
-    await db.updateSection(section.id, { status: 'generated', audio_file_path: localPath });
-    return audioBuffer;
-  } catch (e) {
-    debugLog(`Error generating audio: ${e.message}`);
-    return null;
-  }
+  fs.writeFileSync(localPath, audioBuffer);
+  await db.updateSection(section.id, { status: 'generated', audio_file_path: localPath });
+  return audioBuffer;
 }
 
 // Reads a cached section's audio from disk, tolerating transient read
@@ -610,6 +671,7 @@ app.post('/api/chapters/:chapterId/prepare', authMiddleware, async (req, res) =>
 
     const sections = await db.getSections(chapterId, 0);
     let generatedCount = 0;
+    let lastError = null;
 
     for (const section of sections) {
       const localPath = path.join(audioDir, `${section.id}.mp3`);
@@ -621,14 +683,21 @@ app.post('/api/chapters/:chapterId/prepare', authMiddleware, async (req, res) =>
 
       if (Date.now() > deadline) break; // out of budget this round - client will poll again
 
-      const audioBuffer = await synthesizeAndCacheSection(chapter, section, localPath);
-      if (audioBuffer) generatedCount++;
+      try {
+        await synthesizeAndCacheSection(chapter, section, localPath);
+        generatedCount++;
+      } catch (e) {
+        debugLog(`Prepare: section ${section.id} failed: ${e.message}`);
+        lastError = e.message;
+      }
     }
 
+    const ready = generatedCount === sections.length;
     res.json({
       totalSections: sections.length,
       generatedSections: generatedCount,
-      ready: generatedCount === sections.length
+      ready,
+      lastError: ready ? undefined : lastError
     });
   } catch (error) {
     debugLog(`Prepare error for ${chapterId}: ${error.message}`);
@@ -669,8 +738,17 @@ app.get('/api/chapters/:chapterId/stream', async (req, res) => {
       if (isClosed) break;
       const localPath = path.join(audioDir, `${section.id}.mp3`);
 
-      const audioBuffer = readCachedSection(localPath, section.id)
-        || await synthesizeAndCacheSection(chapter, section, localPath);
+      let audioBuffer = readCachedSection(localPath, section.id);
+      if (!audioBuffer) {
+        try {
+          audioBuffer = await synthesizeAndCacheSection(chapter, section, localPath);
+        } catch (e) {
+          // Skip this one section rather than aborting the whole stream -
+          // a listener would rather hear a small gap than have playback
+          // die entirely partway through a chapter.
+          debugLog(`Stream: section ${section.id} failed to generate: ${e.message}`);
+        }
+      }
 
       if (audioBuffer) res.write(audioBuffer);
     }
