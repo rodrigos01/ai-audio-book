@@ -343,9 +343,21 @@ export default function Player() {
       );
     }
 
+    const retryDownload = async () => { const token = await getToken(); await startDownload(chapter, chapter.title_name, token); };
+
+    if (status === 'error') {
+      return (
+        <md-icon-button onClick={retryDownload} title={`Download failed: ${dl.errorMessage || 'unknown error'} — tap to retry`}>
+          <md-icon style={{ color: 'var(--md-sys-color-error)', fontSize: '24px' }}>
+            <span className="material-symbols-outlined">error</span>
+          </md-icon>
+        </md-icon-button>
+      );
+    }
+
     return (
       <md-icon-button
-        onClick={async () => { const token = await getToken(); await startDownload(chapter, chapter.title_name, token); }}
+        onClick={retryDownload}
         title={isStale ? 'Chapter audio was updated — tap to re-download' : 'Download for offline listening'}
       >
         <md-icon style={{ color: 'var(--md-sys-color-on-surface-variant)', fontSize: '24px' }}>

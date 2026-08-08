@@ -240,6 +240,14 @@ export default function TitleDetail() {
       );
     }
 
+    if (status === 'error') {
+      return (
+        <md-icon-button onClick={() => handleDownloadChapter(chapter)} title={`Download failed: ${dl.errorMessage || 'unknown error'} — tap to retry`}>
+          <md-icon style={{ color: 'var(--md-sys-color-error)' }}><span className="material-symbols-outlined">error</span></md-icon>
+        </md-icon-button>
+      );
+    }
+
     return (
       <md-icon-button onClick={() => handleDownloadChapter(chapter)} title={isStale ? 'Chapter audio was updated — tap to re-download' : 'Download for offline listening'}>
         <md-icon><span className="material-symbols-outlined">download</span></md-icon>
