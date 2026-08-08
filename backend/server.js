@@ -603,15 +603,21 @@ app.get('/api/chapters/:chapterId/stream', async (req, res) => {
       if (isClosed) break;
       const localPath = path.join(audioDir, `${section.id}.mp3`);
 
-      let audioBuffer;
-      let alreadyExists = false;
+      let audioBuffer = null;
 
       if (fs.existsSync(localPath)) {
-        audioBuffer = fs.readFileSync(localPath);
-        alreadyExists = true;
+        try {
+          audioBuffer = fs.readFileSync(localPath);
+        } catch (e) {
+          // Cached file exists but failed to read (e.g. a transient GCS FUSE
+          // hiccup) - fall through and regenerate via TTS instead of letting
+          // this abort the whole stream.
+          debugLog(`Error reading cached audio for ${section.id}, regenerating: ${e.message}`);
+          audioBuffer = null;
+        }
       }
 
-      if (alreadyExists) {
+      if (audioBuffer) {
         res.write(audioBuffer);
       } else {
         const escapeXml = (unsafe) => {
@@ -653,9 +659,16 @@ app.get('/api/chapters/:chapterId/stream', async (req, res) => {
         }
       }
     }
-    res.end();
+    if (!isClosed) res.end();
   } catch (error) {
-    res.end();
+    debugLog(`Stream error for ${chapterId}: ${error.message}`);
+    // Abort the connection instead of gracefully ending it, so the client's
+    // fetch sees a failed request rather than a silently truncated "success".
+    if (res.headersSent) {
+      res.destroy();
+    } else {
+      res.status(500).end();
+    }
   }
 });
 

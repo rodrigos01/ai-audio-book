@@ -46,6 +46,7 @@ steps:
           --platform managed \
           --allow-unauthenticated \
           --execution-environment gen2 \
+          --timeout 3600 \
           --add-volume name=storage-volume,type=cloud-storage,bucket=ai-audio-book-storage-ai-audio-book \
           --add-volume-mount volume=storage-volume,mount-path=/app/storage \
           --update-env-vars STORAGE_BASE_PATH=/app/storage,GOOGLE_APPLICATION_CREDENTIALS=/app/backend/ai-audio-book-key.json,NODE_ENV=production,GOOGLE_CLOUD_PROJECT=$PROJECT_ID,GEMINI_API_KEY=${_GEMINI_API_KEY}
