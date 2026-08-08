@@ -325,8 +325,11 @@ export default function Player() {
     const status = dl?.status || 'none';
     const isStale = status === 'downloaded' && chapter.audio_version != null && dl.audioVersion != null && dl.audioVersion !== chapter.audio_version;
 
-    if (status === 'downloading') {
-      return <md-circular-progress indeterminate style={{ '--md-circular-progress-size': '24px' }}></md-circular-progress>;
+    if (status === 'preparing' || status === 'downloading') {
+      const title = status === 'preparing'
+        ? (dl.total ? `Preparing audio… ${dl.progress}/${dl.total}` : 'Preparing audio…')
+        : 'Downloading…';
+      return <md-circular-progress indeterminate title={title} style={{ '--md-circular-progress-size': '24px' }}></md-circular-progress>;
     }
 
     if (status === 'downloaded' && !isStale) {

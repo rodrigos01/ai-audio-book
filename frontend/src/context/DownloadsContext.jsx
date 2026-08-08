@@ -7,7 +7,7 @@ const DownloadsContext = createContext();
 export const useDownloads = () => useContext(DownloadsContext);
 
 export const DownloadsProvider = ({ children }) => {
-  // { [chapterId]: { status: 'none'|'downloading'|'downloaded'|'error', sizeBytes, downloadedAt, audioVersion } }
+  // { [chapterId]: { status: 'none'|'preparing'|'downloading'|'downloaded'|'error', progress, total, sizeBytes, downloadedAt, audioVersion } }
   const [downloads, setDownloads] = useState({});
   const abortControllers = useRef({});
 
@@ -41,9 +41,30 @@ export const DownloadsProvider = ({ children }) => {
 
     const controller = new AbortController();
     abortControllers.current[chapterId] = controller;
-    setStatus(chapterId, { status: 'downloading', sizeBytes: 0 });
+    setStatus(chapterId, { status: 'preparing', progress: 0, total: 0 });
 
     try {
+      // Phase 1: make sure every section is generated & cached server-side
+      // first. Long chapters can take minutes of TTS synthesis; doing that
+      // across short, bounded polling requests avoids riding on one
+      // long-lived request that could hit a timeout partway through.
+      let ready = false;
+      let lastGenerated = -1;
+      let stallRounds = 0;
+      while (!ready) {
+        const data = await api.prepareChapterDownload(chapterId, token, controller.signal);
+        ready = data.ready;
+        setStatus(chapterId, { status: 'preparing', progress: data.generatedSections, total: data.totalSections });
+
+        if (!ready) {
+          stallRounds = data.generatedSections === lastGenerated ? stallRounds + 1 : 0;
+          lastGenerated = data.generatedSections;
+          if (stallRounds >= 3) throw new Error('Chapter preparation stalled');
+        }
+      }
+
+      // Phase 2: everything is cached now, so this should be a fast read+transfer.
+      setStatus(chapterId, { status: 'downloading', sizeBytes: 0 });
       const res = await fetch(api.getStreamUrl(chapterId, 0, token), { signal: controller.signal });
       if (!res.ok || !res.body) throw new Error('Failed to download chapter audio');
 
