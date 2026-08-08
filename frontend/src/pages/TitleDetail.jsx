@@ -98,7 +98,7 @@ export default function TitleDetail() {
   const loadVoices = useCallback(async () => {
     try {
       const token = await getToken();
-      const data = await api.getVoices(token);
+      const data = await api.getVoices(null, token);
       setVoices(data);
       if (data.length > 0) setSelectedVoice(data[0].id);
     } catch (e) {
@@ -416,7 +416,7 @@ export default function TitleDetail() {
                     maxWidth: '100%'
                 }} className="no-scrollbar">
                     {Object.entries(castingMap).map(([character, voiceId]) => {
-                        const voice = voices.find(v => v.id === voiceId);
+                        const voice = voices.find(v => v.id === voiceId || v.id.endsWith(voiceId) || (voiceId && voiceId.endsWith(v.id)));
                         const isChanging = changingCharacter === character;
                         return (
                             <div key={character} style={{ minWidth: '280px' }}>
@@ -438,7 +438,7 @@ export default function TitleDetail() {
                                             <md-icon-button onClick={() => handlePreviewVoice(voice)} style={{'--md-icon-button-icon-size': '20px'}}>
                                                 <md-icon><span className="material-symbols-outlined">{previewingId === voice?.id ? 'pause' : 'play_arrow'}</span></md-icon>
                                             </md-icon-button>
-                                            <md-icon-button onClick={() => { setChangingCharacter(character); setIsChangingVoice(true); setFilterStyle(voice?.style); }} style={{'--md-icon-button-icon-size': '20px'}}>
+                                            <md-icon-button onClick={() => { setChangingCharacter(character); setIsChangingVoice(true); setFilterGender(null); setFilterStyle(null); }} style={{'--md-icon-button-icon-size': '20px'}}>
                                                 <md-icon><span className="material-symbols-outlined">edit</span></md-icon>
                                             </md-icon-button>
                                         </div>

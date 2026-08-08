@@ -114,9 +114,15 @@ export const api = {
     if (!res.ok) throw new Error('Failed to delete chapter');
     return res.json();
   },
-  getVoices: async (tier = null, token) => {
-    const url = tier ? `${API_BASE}/voices?tier=${tier}` : `${API_BASE}/voices`;
-    const res = await request(url, {}, token);
+  getVoices: async (tier = null, token = null) => {
+    let actualTier = tier;
+    let actualToken = token;
+    if (typeof tier === 'string' && (tier.startsWith('eyJ') || tier.length > 50) && !token) {
+      actualToken = tier;
+      actualTier = null;
+    }
+    const url = actualTier ? `${API_BASE}/voices?tier=${actualTier}` : `${API_BASE}/voices`;
+    const res = await request(url, {}, actualToken);
     if (!res.ok) throw new Error('Failed to fetch voices');
     return res.json();
   },
