@@ -1,31 +1,32 @@
 import { createContext, useContext, useEffect, useRef, useState } from 'react';
 import { api } from '../lib/api';
 import * as offlineStorage from '../lib/offlineStorage';
-import { beginDownload, endDownload } from '../lib/activeDownloads';
 
 const DownloadsContext = createContext();
 
 export const useDownloads = () => useContext(DownloadsContext);
 
 // Combines both phases into a single 0-1 fraction, treating the final
-// download as one more segment after the totalSections generated during
-// preparation - a chapter with N sections has N+1 segments: N fill in one
-// at a time as they're prepared, and the last one fills in once the (now
-// fully-cached, fast) download itself finishes.
+// download as one more "section" after the totalSections generated during
+// preparation - so a chapter with N sections has N+1 steps, and the last
+// one fills in smoothly as bytes actually arrive.
 export const getDownloadProgressFraction = (dl) => {
   if (!dl) return null;
   if (dl.status === 'preparing') {
     return dl.total ? dl.progress / (dl.total + 1) : 0;
   }
   if (dl.status === 'downloading') {
-    return (dl.total || 0) / ((dl.total || 0) + 1);
+    const steps = (dl.total || 0) + 1;
+    const base = (dl.total || 0) / steps;
+    const downloadFraction = dl.expectedBytes ? Math.min(dl.sizeBytes / dl.expectedBytes, 1) : 0;
+    return base + downloadFraction / steps;
   }
   if (dl.status === 'downloaded') return 1;
   return null;
 };
 
 export const DownloadsProvider = ({ children }) => {
-  // { [chapterId]: { status: 'none'|'preparing'|'downloading'|'downloaded'|'error', progress, total, sizeBytes, downloadedAt, audioVersion } }
+  // { [chapterId]: { status: 'none'|'preparing'|'downloading'|'downloaded'|'error', progress, total, sizeBytes, expectedBytes, downloadedAt, audioVersion } }
   const [downloads, setDownloads] = useState({});
   const abortControllers = useRef({});
 
@@ -59,7 +60,6 @@ export const DownloadsProvider = ({ children }) => {
 
     const controller = new AbortController();
     abortControllers.current[chapterId] = controller;
-    beginDownload();
     setStatus(chapterId, { status: 'preparing', progress: 0, total: 0 });
 
     try {
@@ -70,22 +70,22 @@ export const DownloadsProvider = ({ children }) => {
       let ready = false;
       let lastGenerated = -1;
       let stallRounds = 0;
+      let expectedBytes = null;
       while (!ready) {
         const data = await api.prepareChapterDownload(chapterId, token, controller.signal);
         ready = data.ready;
+        expectedBytes = data.totalBytes ?? null;
         setStatus(chapterId, { status: 'preparing', progress: data.generatedSections, total: data.totalSections });
 
         if (!ready) {
           stallRounds = data.generatedSections === lastGenerated ? stallRounds + 1 : 0;
           lastGenerated = data.generatedSections;
-          if (stallRounds >= 3) {
-            throw new Error(data.lastError ? `Chapter preparation stalled: ${data.lastError}` : 'Chapter preparation stalled');
-          }
+          if (stallRounds >= 3) throw new Error('Chapter preparation stalled');
         }
       }
 
       // Phase 2: everything is cached now, so this should be a fast read+transfer.
-      setStatus(chapterId, { status: 'downloading', sizeBytes: 0 });
+      setStatus(chapterId, { status: 'downloading', sizeBytes: 0, expectedBytes });
       const res = await fetch(api.getStreamUrl(chapterId, 0, token), { signal: controller.signal });
       if (!res.ok || !res.body) throw new Error('Failed to download chapter audio');
 
@@ -125,14 +125,13 @@ export const DownloadsProvider = ({ children }) => {
       });
     } catch (err) {
       if (err.name !== 'AbortError') {
-        console.error(`Chapter download failed for ${chapterId}:`, err);
-        setStatus(chapterId, { status: 'error', errorMessage: err.message });
+        console.error('Chapter download failed:', err);
+        setStatus(chapterId, { status: 'error' });
       } else {
         setStatus(chapterId, { status: 'none' });
       }
     } finally {
       delete abortControllers.current[chapterId];
-      endDownload();
     }
   };
 

@@ -5,24 +5,8 @@ import './index.css'
 import App from './App.jsx'
 import { AuthProvider } from './context/AuthContext'
 import { DownloadsProvider } from './context/DownloadsContext'
-import { hasActiveDownloads } from './lib/activeDownloads'
 
-registerSW({
-  immediate: true,
-  // Default autoUpdate behavior reloads the page the instant a new service
-  // worker activates, which would silently abort an in-progress chapter
-  // download. Wait until no downloads are active before reloading.
-  onNeedReload: () => {
-    const reloadWhenIdle = () => {
-      if (hasActiveDownloads()) {
-        setTimeout(reloadWhenIdle, 2000);
-      } else {
-        window.location.reload();
-      }
-    };
-    reloadWhenIdle();
-  }
-})
+registerSW({ immediate: true })
 
 // Import Material Web Components to register them
 import '@material/web/button/filled-button.js';

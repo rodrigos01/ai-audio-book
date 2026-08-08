@@ -3,7 +3,6 @@ import { useParams, Link } from 'react-router-dom';
 import { api } from '../lib/api';
 import { useAuth } from '../context/AuthContext';
 import { useDownloads, getDownloadProgressFraction } from '../context/DownloadsContext';
-import ProgressRing from '../components/ProgressRing';
 import * as offlineStorage from '../lib/offlineStorage';
 import { db } from '../lib/firebase';
 import { doc, collection, query, where, getDoc, getDocs, orderBy } from 'firebase/firestore';
@@ -330,12 +329,8 @@ export default function Player() {
       const fraction = getDownloadProgressFraction(dl) ?? 0;
       const title = status === 'preparing'
         ? (dl.total ? `Preparing audio… ${dl.progress}/${dl.total}` : 'Preparing audio…')
-        : 'Downloading…';
-      return (
-        <span style={{ display: 'inline-flex', padding: '8px' }}>
-          <ProgressRing fraction={fraction} size={24} title={title} />
-        </span>
-      );
+        : `Downloading… ${Math.round(fraction * 100)}%`;
+      return <md-circular-progress value={fraction} title={title} style={{ '--md-circular-progress-size': '24px' }}></md-circular-progress>;
     }
 
     if (status === 'downloaded' && !isStale) {
@@ -348,21 +343,9 @@ export default function Player() {
       );
     }
 
-    const retryDownload = async () => { const token = await getToken(); await startDownload(chapter, chapter.title_name, token); };
-
-    if (status === 'error') {
-      return (
-        <md-icon-button onClick={retryDownload} title={`Download failed: ${dl.errorMessage || 'unknown error'} — tap to retry`}>
-          <md-icon style={{ color: 'var(--md-sys-color-error)', fontSize: '24px' }}>
-            <span className="material-symbols-outlined">error</span>
-          </md-icon>
-        </md-icon-button>
-      );
-    }
-
     return (
       <md-icon-button
-        onClick={retryDownload}
+        onClick={async () => { const token = await getToken(); await startDownload(chapter, chapter.title_name, token); }}
         title={isStale ? 'Chapter audio was updated — tap to re-download' : 'Download for offline listening'}
       >
         <md-icon style={{ color: 'var(--md-sys-color-on-surface-variant)', fontSize: '24px' }}>

@@ -4,7 +4,6 @@ import { api } from '../lib/api';
 import { openGooglePicker } from '../lib/googlePicker';
 import { useAuth } from '../context/AuthContext';
 import { useDownloads, getDownloadProgressFraction } from '../context/DownloadsContext';
-import ProgressRing from '../components/ProgressRing';
 import { db } from '../lib/firebase';
 import { doc, collection, query, where, onSnapshot, orderBy, getDoc } from 'firebase/firestore';
 
@@ -227,11 +226,9 @@ export default function TitleDetail() {
       const fraction = getDownloadProgressFraction(dl) ?? 0;
       const title = status === 'preparing'
         ? (dl.total ? `Preparing audio… ${dl.progress}/${dl.total}` : 'Preparing audio…')
-        : 'Downloading…';
+        : `Downloading… ${Math.round(fraction * 100)}%`;
       return (
-        <span style={{ display: 'inline-flex', padding: '8px' }}>
-          <ProgressRing fraction={fraction} size={20} title={title} />
-        </span>
+        <md-circular-progress value={fraction} title={title} style={{ '--md-circular-progress-size': '20px' }}></md-circular-progress>
       );
     }
 
@@ -239,14 +236,6 @@ export default function TitleDetail() {
       return (
         <md-icon-button onClick={() => removeDownload(chapter.id)} title="Downloaded for offline listening — tap to remove">
           <md-icon style={{ color: 'var(--md-sys-color-tertiary)' }}><span className="material-symbols-outlined">download_done</span></md-icon>
-        </md-icon-button>
-      );
-    }
-
-    if (status === 'error') {
-      return (
-        <md-icon-button onClick={() => handleDownloadChapter(chapter)} title={`Download failed: ${dl.errorMessage || 'unknown error'} — tap to retry`}>
-          <md-icon style={{ color: 'var(--md-sys-color-error)' }}><span className="material-symbols-outlined">error</span></md-icon>
         </md-icon-button>
       );
     }
