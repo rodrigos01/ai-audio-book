@@ -98,7 +98,7 @@ export default function TitleDetail() {
   const loadVoices = useCallback(async () => {
     try {
       const token = await getToken();
-      const data = await api.getVoices(token);
+      const data = await api.getVoices(null, token);
       setVoices(data);
       if (data.length > 0) setSelectedVoice(data[0].id);
     } catch (e) {
