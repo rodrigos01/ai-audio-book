@@ -78,9 +78,7 @@ export const DownloadsProvider = ({ children }) => {
         if (!ready) {
           stallRounds = data.generatedSections === lastGenerated ? stallRounds + 1 : 0;
           lastGenerated = data.generatedSections;
-          if (stallRounds >= 3) {
-            throw new Error(data.lastError ? `Chapter preparation stalled: ${data.lastError}` : 'Chapter preparation stalled');
-          }
+          if (stallRounds >= 3) throw new Error('Chapter preparation stalled');
         }
       }
 
