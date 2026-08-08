@@ -28,7 +28,13 @@ const samplesDir = path.join(STORAGE_BASE_PATH, 'samples');
 });
 
 function debugLog(msg) {
-  console.log(`[${new Date().toISOString()}] ${msg}`);
+  const line = `[${new Date().toISOString()}] ${msg}`;
+  console.log(line);
+  try {
+    fs.appendFileSync(path.resolve(__dirname, '../backend.log'), line + '\n');
+  } catch (e) {
+    // Ignore file write errors
+  }
 }
 
 // TTS Client
@@ -37,10 +43,10 @@ try {
   // Use GOOGLE_APPLICATION_CREDENTIALS if set, otherwise fallback to local key file
   const keyPath = process.env.GOOGLE_APPLICATION_CREDENTIALS || path.join(__dirname, 'ai-audio-book-36e0611138d4.json');
   if (fs.existsSync(keyPath)) {
-    ttsClient = new textToSpeech.TextToSpeechClient({ keyFilename: keyPath });
+    ttsClient = new textToSpeech.TextToSpeechClient({ keyFilename: keyPath, apiEndpoint: 'us-central1-texttospeech.googleapis.com' });
     debugLog(`Google Cloud TTS Client initialized with key file: ${keyPath}`);
   } else {
-    ttsClient = new textToSpeech.TextToSpeechClient();
+    ttsClient = new textToSpeech.TextToSpeechClient({ apiEndpoint: 'us-central1-texttospeech.googleapis.com' });
     debugLog('Google Cloud TTS Client initialized with Application Default Credentials');
   }
 } catch (e) {
@@ -231,6 +237,35 @@ function splitSSMLIntoSections(ssml) {
   return validSections;
 }
 
+// Groups multiple dialogue turns into multi-speaker section blocks for Gemini-TTS.
+// Target ~800 bytes max per section to keep synthesis under GCP's 58s gateway deadline.
+function splitMultiSpeakerIntoSections(scriptText, maxBytes = 800) {
+  if (!scriptText) return [];
+  let clean = scriptText.replace(/```[a-z]*\s*/gi, '').replace(/```/gi, '').trim();
+  const lines = clean.split(/\r?\n/).map(l => l.trim()).filter(l => l.length > 0);
+  const sections = [];
+  let currentGroup = [];
+  let currentLength = 0;
+
+  for (const line of lines) {
+    const lineLen = Buffer.byteLength(line, 'utf8');
+    if (currentLength + lineLen + 1 > maxBytes && currentGroup.length > 0) {
+      sections.push(currentGroup.join('\n'));
+      currentGroup = [line];
+      currentLength = lineLen;
+    } else {
+      currentGroup.push(line);
+      currentLength += lineLen + 1;
+    }
+  }
+
+  if (currentGroup.length > 0) {
+    sections.push(currentGroup.join('\n'));
+  }
+
+  return sections;
+}
+
 // Google Docs Parser
 function extractTextFromGoogleDoc(doc) {
   let fullText = '';
@@ -303,9 +338,10 @@ app.post('/api/chapters/:chapterId/cast', authMiddleware, async (req, res) => {
     const VOICES = require('./voices.json');
     const existingCast = title.casting_map || {};
     const existingNarrator = title.narrator_voice || null;
+    const tier = title.tts_tier || 'basic';
 
-    debugLog(`AI Casting: Analyzing chapter ${chapterId} for ${title.name}`);
-    const result = await aiCasting.analyzeChapter(chapter.content, existingCast, VOICES, existingNarrator);
+    debugLog(`AI Casting (${tier}): Analyzing chapter ${chapterId} for ${title.name}`);
+    const result = await aiCasting.analyzeChapter(chapter.content, existingCast, VOICES, existingNarrator, tier);
 
     // Update Title's casting map and record the narrator if it's the first time
     const titleUpdate = { casting_map: result.updated_cast };
@@ -314,19 +350,24 @@ app.post('/api/chapters/:chapterId/cast', authMiddleware, async (req, res) => {
     }
     await db.updateTitle(title.id, titleUpdate);
 
-    // Update Chapter with SSML content and flag
+    const isSSML = tier === 'basic';
+
+    // Update Chapter with SSML content, performance prompt, and flag
     await db.updateChapter(chapterId, {
       content: result.ssml,
-      is_ssml: true,
+      is_ssml: isSSML,
       voice_id: result.narrator_voice,
+      performance_prompt: result.performance_prompt || null,
     });
 
     // Also delete any existing sections because the content has changed
     await deleteChapterSections(chapterId);
 
-    // Create new SSML sections
-    const ssmlSections = splitSSMLIntoSections(result.ssml);
-    const sectionData = ssmlSections.map((content, index) => ({
+    // Create new sections
+    const parsedSections = isSSML
+      ? splitSSMLIntoSections(result.ssml)
+      : splitMultiSpeakerIntoSections(result.ssml);
+    const sectionData = parsedSections.map((content, index) => ({
       id: uuidv4(),
       chapter_id: chapterId,
       content,
@@ -349,7 +390,12 @@ app.post('/api/chapters/:chapterId/cast', authMiddleware, async (req, res) => {
 
 app.get('/api/voices', (req, res) => {
   const VOICES = require('./voices.json');
-  const enrichedVoices = VOICES.map(v => ({
+  const tierFilter = req.query.tier;
+  let filtered = VOICES;
+  if (tierFilter) {
+    filtered = VOICES.filter(v => v.tier === tierFilter || (!v.tier && tierFilter === 'basic'));
+  }
+  const enrichedVoices = filtered.map(v => ({
     ...v,
     lang: 'en-US',
     sampleUrl: `/samples/${v.id}.mp3`
@@ -357,29 +403,23 @@ app.get('/api/voices', (req, res) => {
   res.json(enrichedVoices);
 });
 
-// app.get('/api/titles', async (req, res) => {
-//   try {
-//     const titles = await db.getTitles(req.clientId, req.userId);
-//     res.json(titles);
-//   } catch (error) {
-//     res.status(500).json({ error: error.message });
-//   }
-// });
-
 app.post('/api/titles', async (req, res) => {
-  const { name, ai_casting_enabled } = req.body;
+  const { name, ai_casting_enabled, tts_tier, narrator_voice } = req.body;
   if (!name) return res.status(400).json({ error: 'Name is required' });
   try {
     const id = uuidv4();
+    const tier = tts_tier === 'pro' ? 'pro' : 'basic';
     await db.createTitle({
       id,
       name,
       ai_casting_enabled: !!ai_casting_enabled,
+      tts_tier: tier,
+      narrator_voice: narrator_voice || null,
       casting_map: {},
       client_id: req.clientId,
       user_id: req.userId
     });
-    res.json({ id, name, ai_casting_enabled: !!ai_casting_enabled });
+    res.json({ id, name, ai_casting_enabled: !!ai_casting_enabled, tts_tier: tier, narrator_voice: narrator_voice || null });
   } catch (error) {
     res.status(500).json({ error: error.message });
   }
@@ -498,14 +538,17 @@ app.post('/api/titles/:id/chapters', authMiddleware, async (req, res) => {
     let voiceId = voice_id || 'en-US-Chirp3-HD-Aoede';
     let isSSML = false;
 
+    let performancePrompt = null;
+
     if (title.ai_casting_enabled) {
       try {
-        debugLog(`AI Casting: Auto-casting new chapter for ${title.name}`);
+        const tier = title.tts_tier || 'basic';
+        debugLog(`AI Casting (${tier}): Auto-casting new chapter for ${title.name}`);
         const VOICES = require('./voices.json');
         const existingCast = title.casting_map || {};
         const existingNarrator = title.narrator_voice || null;
 
-        const result = await aiCasting.analyzeChapter(content, existingCast, VOICES, existingNarrator);
+        const result = await aiCasting.analyzeChapter(content, existingCast, VOICES, existingNarrator, tier);
 
         // Update Title mapping
         const titleUpdate = { casting_map: result.updated_cast };
@@ -514,7 +557,8 @@ app.post('/api/titles/:id/chapters', authMiddleware, async (req, res) => {
 
         content = result.ssml;
         voiceId = result.narrator_voice;
-        isSSML = true;
+        isSSML = tier === 'basic';
+        performancePrompt = result.performance_prompt || null;
       } catch (castError) {
         debugLog(`Auto-casting failed, falling back to standard: ${castError.message}`);
       }
@@ -528,10 +572,13 @@ app.post('/api/titles/:id/chapters', authMiddleware, async (req, res) => {
       content,
       voice_id: voiceId,
       is_ssml: isSSML,
+      performance_prompt: performancePrompt,
       name: name || null
     });
 
-    const sections = isSSML ? splitSSMLIntoSections(content) : breakContentIntoSections(content);
+    const sections = isSSML
+      ? splitSSMLIntoSections(content)
+      : (title.tts_tier === 'pro' ? splitMultiSpeakerIntoSections(content) : breakContentIntoSections(content));
     const sectionItems = sections.map((text, i) => ({
       id: uuidv4(),
       chapter_id: chapterId,
@@ -624,50 +671,222 @@ function sanitizeSSML(rawContent, isSSML) {
   return `<speak>${clean}</speak>`;
 }
 
-// Synthesizes a section's audio via TTS and caches it to disk + Firestore.
-// Returns the audio buffer on success, or null if synthesis failed (logged,
-// not thrown, so callers can decide how to handle a single failed section).
-async function synthesizeAndCacheSection(chapter, section, localPath) {
-  const ssmlContent = sanitizeSSML(section.content, chapter.is_ssml);
+function getGcpVoiceName(voiceId) {
+  if (!voiceId) return 'en-US-Journey-F';
+  if (voiceId.startsWith('en-US-')) return voiceId;
+  const geminiMap = {
+    'Aoede': 'en-US-Journey-F',
+    'Puck': 'en-US-Journey-D',
+    'Kore': 'en-US-Journey-O',
+    'Charon': 'en-US-Journey-M',
+    'Fenrir': 'en-US-Casual-K',
+    'Leda': 'en-US-Studio-O',
+    'Orpheus': 'en-US-Studio-Q',
+    'Callisto': 'en-US-News-K'
+  };
+  return geminiMap[voiceId] || 'en-US-Journey-F';
+}
 
-  // Check if there is actual speakable text inside the SSML (strip tags and whitespace)
-  const speakableText = (ssmlContent || '').replace(/<[^>]*>/g, '').trim();
-  if (speakableText.length === 0) {
-    debugLog(`Section ${section.id} contains no speakable text (empty/malformed SSML). Caching silent fallback audio.`);
-    const silentMp3 = Buffer.from('//uQxAAAAAAAAAAAAAAAAAAAAAAAWGluZwAAAA8AAAACAAACcQCAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICA/wAAAP8AAAD/AAAA/wAAAP8AAAD/AAAA/wAAAP8AAAD/AAAA/wAAAP8AAAD/AAAA/wAAAP8AAAD/AAAA/wAAAP8AAAAA', 'base64');
-    fs.writeFileSync(localPath, silentMp3);
-    await db.updateSection(section.id, { status: 'generated', audio_file_path: localPath });
-    return silentMp3;
+function toGeminiVoiceId(voiceId) {
+  if (!voiceId) return 'Aoede';
+  const supportedGeminiVoices = ['Aoede', 'Puck', 'Kore', 'Charon', 'Fenrir', 'Leda'];
+  if (supportedGeminiVoices.includes(voiceId)) return voiceId;
+
+  const fallbackMap = {
+    'Orpheus': 'Charon',
+    'Callisto': 'Leda',
+    'Achernar': 'Leda',
+    'Autonoe': 'Kore',
+    'Callirrhoe': 'Aoede',
+    'Despina': 'Leda',
+    'Erinome': 'Kore',
+    'Gacrux': 'Aoede',
+    'Laomedeia': 'Leda',
+    'Pulcherrima': 'Leda',
+    'Sulafat': 'Leda',
+    'Vindemiatrix': 'Kore',
+    'Zephyr': 'Kore',
+    'Orus': 'Charon',
+    'Achird': 'Puck',
+    'Algenib': 'Fenrir',
+    'Algieba': 'Charon',
+    'Alnilam': 'Fenrir',
+    'Enceladus': 'Charon',
+    'Iapetus': 'Charon',
+    'Rasalgethi': 'Charon',
+    'Sadachbia': 'Puck',
+    'Sadaltager': 'Charon',
+    'Schedar': 'Charon',
+    'Umbriel': 'Charon'
+  };
+
+  for (const [key, val] of Object.entries(fallbackMap)) {
+    if (voiceId.includes(key)) return val;
   }
 
-  const voiceName = chapter.voice_id || 'en-US-Chirp3-HD-Aoede';
-  let languageCode = 'en-US';
-  if (voiceName.includes('-')) {
-    const parts = voiceName.split('-');
-    if (parts.length >= 2) {
-      languageCode = `${parts[0]}-${parts[1]}`;
+  for (const gv of supportedGeminiVoices) {
+    if (voiceId.endsWith(gv) || voiceId.toLowerCase().includes(gv.toLowerCase())) {
+      return gv;
     }
   }
 
-  const request = {
-    input: { ssml: ssmlContent },
-    voice: { languageCode, name: voiceName },
-    audioConfig: { audioEncoding: 'MP3' },
-  };
+  return 'Aoede';
+}
+
+function extractSpeakerConfigsFromText(text, castingMap, narratorVoice) {
+  const supportedGeminiVoices = ['Aoede', 'Puck', 'Kore', 'Charon', 'Fenrir', 'Leda'];
+  const speakerConfigs = [];
+  const addedAliases = new Set();
+  const usedVoiceIds = new Set();
+
+  const lines = text.split(/\r?\n/);
+
+  for (const line of lines) {
+    const match = line.match(/^([a-zA-Z0-9]+):/);
+    if (match) {
+      const alias = match[1];
+      if (!addedAliases.has(alias)) {
+        let voiceId;
+        if (castingMap && castingMap[alias]) {
+          voiceId = toGeminiVoiceId(castingMap[alias]);
+        } else {
+          const foundKey = Object.keys(castingMap || {}).find(k => k.toLowerCase() === alias.toLowerCase());
+          if (foundKey) {
+            voiceId = toGeminiVoiceId(castingMap[foundKey]);
+          } else {
+            voiceId = toGeminiVoiceId(alias);
+          }
+        }
+
+        // Ensure each alias gets a distinct speakerId from supported list
+        if (usedVoiceIds.has(voiceId)) {
+          const unused = supportedGeminiVoices.find(v => !usedVoiceIds.has(v));
+          if (unused) voiceId = unused;
+        }
+
+        speakerConfigs.push({ speakerAlias: alias, speakerId: voiceId });
+        addedAliases.add(alias);
+        usedVoiceIds.add(voiceId);
+      }
+    }
+  }
+
+  // Fallback: If text had no lines with "Alias:", add Narrator with narratorVoice
+  if (speakerConfigs.length === 0) {
+    const defaultNarrator = toGeminiVoiceId(narratorVoice);
+    speakerConfigs.push({ speakerAlias: 'Narrator', speakerId: defaultNarrator });
+  }
+
+  return speakerConfigs;
+}
+
+// Synthesizes a section's audio via TTS and caches it to disk + Firestore.
+// Returns the audio buffer on success, or null if synthesis failed.
+async function synthesizeAndCacheSection(title, chapter, section, localPath) {
+  const isProTier = title && title.tts_tier === 'pro';
+  const isSSML = !isProTier && chapter.is_ssml && (section.content || '').trim().startsWith('<speak>');
+  let request;
+
+  if (isSSML) {
+    const ssmlContent = sanitizeSSML(section.content, true);
+    const speakableText = (ssmlContent || '').replace(/<[^>]*>/g, '').trim();
+    if (speakableText.length === 0) {
+      debugLog(`Section ${section.id} contains no speakable text. Caching silent fallback audio.`);
+      const silentMp3 = Buffer.from('//uQxAAAAAAAAAAAAAAAAAAAAAAAWGluZwAAAA8AAAACAAACcQCAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICA/wAAAP8AAAD/AAAA/wAAAP8AAAD/AAAA/wAAAP8AAAD/AAAA/wAAAP8AAAD/AAAA/wAAAP8AAAD/AAAA/wAAAP8AAAAA', 'base64');
+      fs.writeFileSync(localPath, silentMp3);
+      await db.updateSection(section.id, { status: 'generated', audio_file_path: localPath });
+      return silentMp3;
+    }
+
+    const rawVoice = chapter.voice_id || 'en-US-Chirp3-HD-Aoede';
+    const voiceName = getGcpVoiceName(rawVoice);
+    let languageCode = 'en-US';
+    if (voiceName.includes('-')) {
+      const parts = voiceName.split('-');
+      if (parts.length >= 2) languageCode = `${parts[0]}-${parts[1]}`;
+    }
+
+    request = {
+      input: { ssml: ssmlContent },
+      voice: { languageCode, name: voiceName },
+      audioConfig: { audioEncoding: 'MP3' },
+    };
+  } else if (isProTier) {
+    // Gemini-TTS Multi-Speaker synthesis specification
+    const textContent = (section.content || '').replace(/<[^>]*>/g, '').trim();
+    if (textContent.length === 0) {
+      debugLog(`Section ${section.id} contains no text. Caching silent fallback audio.`);
+      const silentMp3 = Buffer.from('//uQxAAAAAAAAAAAAAAAAAAAAAAAWGluZwAAAA8AAAACAAACcQCAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICA/wAAAP8AAAD/AAAA/wAAAP8AAAD/AAAA/wAAAP8AAAD/AAAA/wAAAP8AAAD/AAAA/wAAAP8AAAD/AAAA/wAAAP8AAAAA', 'base64');
+      fs.writeFileSync(localPath, silentMp3);
+      await db.updateSection(section.id, { status: 'generated', audio_file_path: localPath });
+      return silentMp3;
+    }
+
+    const castingMap = (title && title.casting_map) || {};
+    const narratorVoice = (title && title.narrator_voice) || chapter.voice_id || 'Aoede';
+    const speakerConfigs = extractSpeakerConfigsFromText(textContent, castingMap, narratorVoice);
+    const performancePrompt = (chapter && chapter.performance_prompt)
+      || "Synthesize the text as a multi-speaker dramatic audiobook performance with distinct character voices and natural emotional expressions.";
+
+    request = {
+      input: {
+        prompt: performancePrompt,
+        text: textContent
+      },
+      voice: {
+        languageCode: 'en-US',
+        modelName: 'gemini-3.1-flash-tts-preview',
+        multiSpeakerVoiceConfig: {
+          speakerVoiceConfigs: speakerConfigs
+        }
+      },
+      audioConfig: {
+        audioEncoding: 'MP3'
+      }
+    };
+  } else {
+    // Single speaker plain text fallback
+    const textContent = (section.content || '').replace(/<[^>]*>/g, '').trim();
+    if (textContent.length === 0) {
+      debugLog(`Section ${section.id} contains no text. Caching silent fallback audio.`);
+      const silentMp3 = Buffer.from('//uQxAAAAAAAAAAAAAAAAAAAAAAAWGluZwAAAA8AAAACAAACcQCAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICA/wAAAP8AAAD/AAAA/wAAAP8AAAD/AAAA/wAAAP8AAAD/AAAA/wAAAP8AAAD/AAAA/wAAAP8AAAD/AAAA/wAAAP8AAAAA', 'base64');
+      fs.writeFileSync(localPath, silentMp3);
+      await db.updateSection(section.id, { status: 'generated', audio_file_path: localPath });
+      return silentMp3;
+    }
+
+    const rawVoice = chapter.voice_id || 'Aoede';
+    const voiceName = getGcpVoiceName(rawVoice);
+    let languageCode = 'en-US';
+    if (voiceName.includes('-')) {
+      const parts = voiceName.split('-');
+      if (parts.length >= 2) languageCode = `${parts[0]}-${parts[1]}`;
+    }
+
+    request = {
+      input: { text: textContent },
+      voice: { languageCode, name: voiceName },
+      audioConfig: { audioEncoding: 'MP3' },
+    };
+  }
+
   try {
-    debugLog(`Generating audio for section ${section.id}`);
+    debugLog(`Generating audio for section ${section.id} (IsProTier: ${isProTier})`);
+    debugLog(`TTS Request Payload for ${section.id}:\n${JSON.stringify(request, null, 2)}`);
     const [response] = await ttsClient.synthesizeSpeech(request);
     const audioBuffer = response.audioContent;
 
     fs.writeFileSync(localPath, audioBuffer);
     await db.updateSection(section.id, { status: 'generated', audio_file_path: localPath });
+    debugLog(`Successfully cached audio for section ${section.id} (${audioBuffer.length} bytes)`);
     return audioBuffer;
   } catch (e) {
+    console.error(`[TTS Error] Generating audio for section ${section.id}:`, e);
+    console.error(`[TTS Error Stack]`, e.stack);
+    if (e.details) console.error(`[TTS gRPC Details]`, e.details);
+    if (e.code) console.error(`[TTS gRPC Code]`, e.code);
     debugLog(`Error generating audio for section ${section.id}: ${e.message}`);
-    if (e.details) debugLog(`gRPC details: ${e.details}`);
-    if (e.code) debugLog(`gRPC status code: ${e.code}`);
-    debugLog(`Failed TTS Request Params: voice="${voiceName}", languageCode="${languageCode}", is_ssml=${!!chapter.is_ssml}, ssml_len=${ssmlContent?.length}, snippet=${JSON.stringify(ssmlContent?.slice(0, 200))}`);
-    return null;
+    throw new Error(`TTS synthesis failed for section ${section.id}: ${e.message}`);
   }
 }
 
@@ -713,7 +932,7 @@ app.post('/api/chapters/:chapterId/prepare', authMiddleware, async (req, res) =>
 
       if (Date.now() > deadline) break; // out of budget this round - client will poll again
 
-      const audioBuffer = await synthesizeAndCacheSection(chapter, section, localPath);
+      const audioBuffer = await synthesizeAndCacheSection(title, chapter, section, localPath);
       if (audioBuffer) generatedCount++;
     }
 
@@ -725,6 +944,8 @@ app.post('/api/chapters/:chapterId/prepare', authMiddleware, async (req, res) =>
       ready: generatedCount === sections.length
     });
   } catch (error) {
+    console.error(`[Prepare Endpoint Error] Chapter ${chapterId}:`, error);
+    console.error(`[Prepare Stack]`, error.stack);
     debugLog(`Prepare error for ${chapterId}: ${error.message}`);
     if (!isClosed) res.status(500).json({ error: error.message });
   }
@@ -740,6 +961,7 @@ app.get('/api/chapters/:chapterId/stream', async (req, res) => {
   try {
     const chapter = await db.getChapter(chapterId);
     if (!chapter) return res.status(404).end();
+    const title = await db.getTitle(chapter.title_id, req.clientId, req.userId);
 
     const startIndex = parseInt(req.query.offset || 0);
     debugLog(`Streaming ${chapterId} starting from offset ${startIndex}`);
@@ -759,19 +981,21 @@ app.get('/api/chapters/:chapterId/stream', async (req, res) => {
       const localPath = path.join(audioDir, `${section.id}.mp3`);
 
       const audioBuffer = readCachedSection(localPath, section.id)
-        || await synthesizeAndCacheSection(chapter, section, localPath);
+        || await synthesizeAndCacheSection(title, chapter, section, localPath);
 
       if (audioBuffer) res.write(audioBuffer);
     }
     if (!isClosed) res.end();
   } catch (error) {
+    console.error(`[Stream Endpoint Error] Chapter ${chapterId}:`, error);
+    console.error(`[Stream Stack]`, error.stack);
     debugLog(`Stream error for ${chapterId}: ${error.message}`);
     // Abort the connection instead of gracefully ending it, so the client's
     // fetch sees a failed request rather than a silently truncated "success".
     if (res.headersSent) {
       res.destroy();
     } else {
-      res.status(500).end();
+      res.status(500).json({ error: error.message });
     }
   }
 });

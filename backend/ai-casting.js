@@ -33,12 +33,19 @@ class AICastingService {
         };
     }
 
-    async analyzeChapter(chapterText, existingCast = {}, voiceList = [], existingNarrator = null) {
+    async analyzeChapter(chapterText, existingCast = {}, voiceList = [], existingNarrator = null, tier = 'basic') {
         if (!process.env.GEMINI_API_KEY) {
             throw new Error("Gemini API key is missing. Please configure it in your environment.");
         }
 
-        const availableVoices = voiceList.map(v => ({
+        // Filter available voices based on title tier if tier is provided
+        const filteredVoices = voiceList.filter(v => {
+            if (tier === 'pro') return v.tier === 'pro';
+            return v.tier === 'basic' || !v.tier;
+        });
+        const voicesToUse = filteredVoices.length > 0 ? filteredVoices : voiceList;
+
+        const availableVoices = voicesToUse.map(v => ({
             id: v.id,
             gender: v.gender,
             description: v.description,
@@ -111,36 +118,90 @@ class AICastingService {
             return acc;
         }, {});
 
-        // Phase 2: SSML Generation
-        const ssmlPrompt = `
-            ### Task: Phase 2 - SSML Generation & Dramatic Rewriting
-            Using the provided casting map, rewrite the chapter text into a high-quality SSML script. Make sure the entire text is included in the SSML output
+        let formattedOutput = '';
+        let performancePrompt = null;
 
-            ### Casting Map to Use:
-            ${JSON.stringify(updatedCast, null, 2)}
+        if (tier === 'pro') {
+            // Phase 2 for Gemini TTS: Natural Language Multi-Speaker Script & Performance Prompt Generation
+            const proPrompt = `
+                ### Task: Phase 2 - Natural Language Multi-Speaker Script & Performance Prompt Generation
+                Using the provided casting map, analyze the chapter text and perform two tasks:
+                1. Rewrite the chapter text into a natural language multi-speaker script optimized for Gemini TTS.
+                2. Generate a concise, tailored natural language performance prompt (1-2 sentences) describing the ideal vocal style, tone, pace, and genre performance for this specific chapter (e.g. "Synthesize the text as an engaging, warm podcast conversation with natural pacing and reflective tone." or "Synthesize the text as a tense, dramatic thriller with quiet intensity").
 
-            ### Instructions:
-            1. Wrap the entire output in <speak> tags.
-            2. Use <p> tags for every paragraph.
-            3. Use <voice name="VOICE_ID"> for ALL dialogue, where VOICE_ID is the ID of the voice from the casting map.
-            4. Strip short dialogue attributions ("[pronoun] said.") ONLY IF they don't add visual or explanatory context to the scene
-            5. Each <voice> tag must be contained WITHIN a <p> tag. Do not span <voice> tags across multiple paragraphs.
-            6. Identify words that require special pronunciation and wrap them in <phoneme alphabet="ipa" ph="..."> tags.
+                ### Casting Map to Use:
+                ${JSON.stringify(updatedCast, null, 2)}
 
-            ### Chapter Text:
-            ${chapterText}
-        `;
+                ### Instructions:
+                1. Format every speaker turn on a new line starting with "SpeakerAlias: Dialogue" (e.g. "Narrator: ...", "Alice: ...").
+                2. SpeakerAlias MUST consist solely of alphanumeric characters without spaces (e.g. use "Narrator" for narration, "Alice" for Alice, "Bob" for Bob).
+                3. Add natural language vocal and emotional cues inside brackets within turns (e.g. "[whispering]", "[excitedly]", "[sighs]", "[softly]", "[pause]") to instruct tone, emotion, and rhythm for performance.
+                4. Strip mechanical dialogue attributions (e.g. "she whispered") when translated into natural vocal performance cues ("[whispering]").
+                5. DO NOT use any SSML or XML tags (<speak>, <voice>, <p>, etc.). Output strictly natural multi-speaker script text.
 
-        const ssmlResult = await this.genAI.models.generateContent({
-            ...this.modelConfig,
-            contents: ssmlPrompt,
-        });
-        const ssmlResponse = ssmlResult.text;
+                ### Chapter Text:
+                ${chapterText}
+            `;
+
+            const proSchema = {
+                type: "object",
+                properties: {
+                    performance_prompt: {
+                        type: "string",
+                        description: "Tailored natural language performance prompt describing the vocal style, tone, pace, and mood for this chapter."
+                    },
+                    script: {
+                        type: "string",
+                        description: "The formatted natural language multi-speaker script text with SpeakerAlias: Dialogue lines."
+                    }
+                },
+                required: ["performance_prompt", "script"]
+            };
+
+            const proResult = await this.genAI.models.generateContent({
+                ...this.modelConfig,
+                config: {
+                    responseMimeType: "application/json",
+                    responseSchema: proSchema,
+                },
+                contents: proPrompt,
+            });
+            const proParsed = JSON.parse(proResult.text);
+            formattedOutput = proParsed.script;
+            performancePrompt = proParsed.performance_prompt;
+        } else {
+            // Phase 2 for Chirp3 (Basic): SSML Generation
+            const ssmlPrompt = `
+                ### Task: Phase 2 - SSML Generation & Dramatic Rewriting
+                Using the provided casting map, rewrite the chapter text into a high-quality SSML script. Make sure the entire text is included in the SSML output
+
+                ### Casting Map to Use:
+                ${JSON.stringify(updatedCast, null, 2)}
+
+                ### Instructions:
+                1. Wrap the entire output in <speak> tags.
+                2. Use <p> tags for every paragraph.
+                3. Use <voice name="VOICE_ID"> for ALL dialogue, where VOICE_ID is the ID of the voice from the casting map.
+                4. Strip short dialogue attributions ("[pronoun] said.") ONLY IF they don't add visual or explanatory context to the scene
+                5. Each <voice> tag must be contained WITHIN a <p> tag. Do not span <voice> tags across multiple paragraphs.
+                6. Identify words that require special pronunciation and wrap them in <phoneme alphabet="ipa" ph="..."> tags.
+
+                ### Chapter Text:
+                ${chapterText}
+            `;
+
+            const ssmlResult = await this.genAI.models.generateContent({
+                ...this.modelConfig,
+                contents: ssmlPrompt,
+            });
+            formattedOutput = ssmlResult.text;
+        }
 
         return {
             updated_cast: updatedCast,
-            ssml: ssmlResponse,
+            ssml: formattedOutput,
             narrator_voice: castingResponse.narrator_voice,
+            performance_prompt: performancePrompt,
         };
     }
 }

@@ -48,10 +48,10 @@ export const api = {
     if (!res.ok) throw new Error('Failed to fetch titles');
     return res.json();
   },
-  createTitle: async (name, aiCastingEnabled, token) => {
+  createTitle: async (name, aiCastingEnabled, ttsTier = 'basic', narratorVoice = null, token) => {
     const res = await request(`${API_BASE}/titles`, {
       method: 'POST',
-      body: JSON.stringify({ name, ai_casting_enabled: aiCastingEnabled })
+      body: JSON.stringify({ name, ai_casting_enabled: aiCastingEnabled, tts_tier: ttsTier, narrator_voice: narratorVoice })
     }, token);
     if (!res.ok) throw new Error('Failed to create title');
     return res.json();
@@ -114,8 +114,9 @@ export const api = {
     if (!res.ok) throw new Error('Failed to delete chapter');
     return res.json();
   },
-  getVoices: async (token) => {
-    const res = await request(`${API_BASE}/voices`, {}, token);
+  getVoices: async (tier = null, token) => {
+    const url = tier ? `${API_BASE}/voices?tier=${tier}` : `${API_BASE}/voices`;
+    const res = await request(url, {}, token);
     if (!res.ok) throw new Error('Failed to fetch voices');
     return res.json();
   },

@@ -3,12 +3,15 @@ import { useNavigate } from 'react-router-dom';
 import { api } from '../lib/api';
 import { useAuth } from '../context/AuthContext';
 import { db } from '../lib/firebase';
-import { collection, query, where, onSnapshot, orderBy } from 'firebase/firestore';
+import { collection, query, where, onSnapshot } from 'firebase/firestore';
 
 export default function Home() {
   const [titles, setTitles] = useState([]);
   const [newTitleName, setNewTitleName] = useState('');
   const [aiCastingEnabled, setAiCastingEnabled] = useState(false);
+  const [ttsTier, setTtsTier] = useState('basic'); // 'basic' | 'pro'
+  const [voices, setVoices] = useState([]);
+  const [selectedVoice, setSelectedVoice] = useState('');
   const [loading, setLoading] = useState(true);
   const [editingId, setEditingId] = useState(null);
   const [editName, setEditName] = useState('');
@@ -18,9 +21,26 @@ export default function Home() {
   const { user, getToken } = useAuth();
 
   useEffect(() => {
+    api.getVoices().then(data => {
+      setVoices(data);
+      const basicVoices = data.filter(v => v.tier === 'basic' || !v.tier);
+      if (basicVoices.length > 0) setSelectedVoice(basicVoices[0].id);
+    }).catch(console.error);
+  }, []);
+
+  const currentTierVoices = voices.filter(v => ttsTier === 'pro' ? v.tier === 'pro' : (v.tier === 'basic' || !v.tier));
+
+  const handleTierChange = (tier) => {
+    setTtsTier(tier);
+    const tierVoices = voices.filter(v => tier === 'pro' ? v.tier === 'pro' : (v.tier === 'basic' || !v.tier));
+    if (tierVoices.length > 0) {
+      setSelectedVoice(tierVoices[0].id);
+    }
+  };
+
+  useEffect(() => {
     if (!user) return;
 
-    setLoading(true);
     const q = query(
       collection(db, 'titles'),
       where('owner_id', '==', `user:${user.uid}`)
@@ -51,9 +71,10 @@ export default function Home() {
     if (!newTitleName.trim()) return;
     try {
       const token = await getToken();
-      await api.createTitle(newTitleName, aiCastingEnabled, token);
+      await api.createTitle(newTitleName, aiCastingEnabled, ttsTier, selectedVoice, token);
       setNewTitleName('');
       setAiCastingEnabled(false);
+      setTtsTier('basic');
     } catch (e) {
       console.error(e);
     }
@@ -91,35 +112,114 @@ export default function Home() {
         border: '1px solid var(--md-sys-color-outline-variant)'
       }}>
         <h2 style={{ fontSize: '1.25rem', color: 'var(--md-sys-color-on-surface)', fontWeight: 400 }}>Create New Book</h2>
-        <form onSubmit={handleCreate} style={{ display: 'flex', gap: '1.5rem', alignItems: 'center', flexFlow: 'wrap' }}>
+        <form onSubmit={handleCreate} style={{ display: 'flex', flexDirection: 'column', gap: '1.25rem' }}>
           <md-filled-text-field
             label="Book Title"
             value={newTitleName}
             onInput={(e) => setNewTitleName(e.target.value)}
-            style={{ flex: '1 0 280px' }}
+            style={{ width: '100%' }}
           ></md-filled-text-field>
 
-          <div style={{ display: 'flex', alignItems: 'center', gap: '1.25rem', backgroundColor: 'var(--md-sys-color-surface-container-high)', padding: '0.5rem 1rem 0.5rem 0.75rem', borderRadius: '1rem', border: '1px solid var(--md-sys-color-outline-variant)' }}>
-            <div style={{ display: 'flex', alignItems: 'center', gap: '0.25rem' }}>
-              <span style={{ fontSize: '0.875rem', fontWeight: 500, color: 'var(--md-sys-color-on-surface)' }}>AI Casting</span>
-              <div className="tooltip-parent">
-                <md-icon-button style={{ '--md-icon-button-icon-size': '18px', width: '32px', height: '32px' }} type="button">
-                  <md-icon><span className="material-symbols-outlined" style={{ fontSize: '18px', opacity: 0.7 }}>info</span></md-icon>
-                </md-icon-button>
-                <div className="tooltip-box">
-                  Analyzes text to identify characters and assign consistent voices automatically.
+          <div style={{ display: 'flex', flexWrap: 'wrap', gap: '1rem', alignItems: 'center' }}>
+            {/* AI Casting Toggle */}
+            <div style={{ display: 'flex', alignItems: 'center', gap: '1rem', backgroundColor: 'var(--md-sys-color-surface-container-high)', padding: '0.5rem 1rem', borderRadius: '0.75rem', border: '1px solid var(--md-sys-color-outline-variant)', height: '44px' }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '0.25rem' }}>
+                <span style={{ fontSize: '0.875rem', fontWeight: 500, color: 'var(--md-sys-color-on-surface)' }}>AI Casting</span>
+                <div className="tooltip-parent">
+                  <md-icon-button style={{ '--md-icon-button-icon-size': '18px', width: '28px', height: '28px' }} type="button">
+                    <md-icon><span className="material-symbols-outlined" style={{ fontSize: '18px', opacity: 0.7 }}>info</span></md-icon>
+                  </md-icon-button>
+                  <div className="tooltip-box">
+                    Analyzes text to identify characters and assign consistent voices automatically.
+                  </div>
                 </div>
               </div>
+              <md-switch
+                selected={aiCastingEnabled || undefined}
+                onClick={() => {
+                  const nextState = !aiCastingEnabled;
+                  setAiCastingEnabled(nextState);
+                  if (!nextState) handleTierChange('basic');
+                }}
+              ></md-switch>
             </div>
-            <md-switch
-              selected={aiCastingEnabled || undefined}
-              onClick={() => setAiCastingEnabled(!aiCastingEnabled)}
-            ></md-switch>
+
+            {/* Audio Tier Selector (Only shown when AI Casting is enabled) */}
+            {aiCastingEnabled && (
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '0.35rem', flex: '1 1 240px' }}>
+                <label style={{ fontSize: '0.8rem', fontWeight: 600, color: 'var(--md-sys-color-on-surface-variant)' }}>Audio Quality Tier</label>
+                <div style={{ display: 'flex', gap: '0.5rem', backgroundColor: 'var(--md-sys-color-surface-container-high)', padding: '0.35rem', borderRadius: '0.75rem', border: '1px solid var(--md-sys-color-outline-variant)' }}>
+                  <button
+                    type="button"
+                    onClick={() => handleTierChange('basic')}
+                    style={{
+                      flex: 1,
+                      padding: '0.5rem 0.75rem',
+                      borderRadius: '0.5rem',
+                      border: 'none',
+                      backgroundColor: ttsTier === 'basic' ? 'var(--md-sys-color-primary)' : 'transparent',
+                      color: ttsTier === 'basic' ? 'var(--md-sys-color-on-primary)' : 'var(--md-sys-color-on-surface)',
+                      fontWeight: 600,
+                      cursor: 'pointer',
+                      fontSize: '0.875rem',
+                      transition: 'all 0.2s ease'
+                    }}
+                  >
+                    Basic (Chirp3)
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => handleTierChange('pro')}
+                    style={{
+                      flex: 1,
+                      padding: '0.5rem 0.75rem',
+                      borderRadius: '0.5rem',
+                      border: 'none',
+                      backgroundColor: ttsTier === 'pro' ? 'var(--md-sys-color-primary)' : 'transparent',
+                      color: ttsTier === 'pro' ? 'var(--md-sys-color-on-primary)' : 'var(--md-sys-color-on-surface)',
+                      fontWeight: 600,
+                      cursor: 'pointer',
+                      fontSize: '0.875rem',
+                      transition: 'all 0.2s ease'
+                    }}
+                  >
+                    Pro (Gemini-TTS)
+                  </button>
+                </div>
+              </div>
+            )}
+
+            {/* Voice Options Dropdown */}
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '0.35rem', flex: '1 1 240px' }}>
+              <label style={{ fontSize: '0.8rem', fontWeight: 600, color: 'var(--md-sys-color-on-surface-variant)' }}>
+                {aiCastingEnabled ? 'Default Narrator Voice' : 'Voice'} ({aiCastingEnabled && ttsTier === 'pro' ? 'Gemini TTS' : 'Chirp3'})
+              </label>
+              <select
+                value={selectedVoice}
+                onChange={(e) => setSelectedVoice(e.target.value)}
+                style={{
+                  height: '44px',
+                  padding: '0 0.75rem',
+                  borderRadius: '0.75rem',
+                  backgroundColor: 'var(--md-sys-color-surface-container-high)',
+                  color: 'var(--md-sys-color-on-surface)',
+                  border: '1px solid var(--md-sys-color-outline-variant)',
+                  fontSize: '0.9rem',
+                  cursor: 'pointer'
+                }}
+              >
+                {currentTierVoices.map(v => (
+                  <option key={v.id} value={v.id}>
+                    {v.name} ({v.gender} - {v.style})
+                  </option>
+                ))}
+              </select>
+            </div>
           </div>
 
-          <md-filled-button type="submit" disabled={!newTitleName.trim() || undefined} style={{ height: '56px', flex: '1 0 100%' }}>
+          <md-filled-button type="submit" disabled={!newTitleName.trim() || undefined} style={{ height: '52px', width: '100%', marginTop: '0.5rem' }}>
             <md-icon slot="icon"><span className="material-symbols-outlined">add</span></md-icon>
-            Create
+            Create Book
           </md-filled-button>
         </form>
       </section>
@@ -182,7 +282,20 @@ export default function Home() {
                       </div>
                     ) : (
                       <>
-                        <div slot="headline" style={{ fontWeight: 500 }}>{title.name}</div>
+                        <div slot="headline" style={{ fontWeight: 500, display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                          <span>{title.name}</span>
+                          <span style={{
+                            fontSize: '0.7rem',
+                            fontWeight: 700,
+                            padding: '0.15rem 0.5rem',
+                            borderRadius: '0.5rem',
+                            backgroundColor: title.tts_tier === 'pro' ? 'rgba(156, 39, 176, 0.15)' : 'rgba(33, 150, 243, 0.15)',
+                            color: title.tts_tier === 'pro' ? '#d81b60' : '#1976d2',
+                            border: `1px solid ${title.tts_tier === 'pro' ? '#d81b60' : '#1976d2'}`
+                          }}>
+                            {title.tts_tier === 'pro' ? 'PRO (Gemini TTS)' : 'BASIC (Chirp3)'}
+                          </span>
+                        </div>
                         <div slot="supporting-text">Created on {title.created_at?.toDate ? title.created_at.toDate().toLocaleDateString() : (title.created_at ? new Date(title.created_at).toLocaleDateString() : 'Just now')}</div>
                       </>
                     )}

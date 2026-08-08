@@ -36,13 +36,16 @@ export default function TitleDetail() {
   const { user, googleAccessToken, getToken, loginWithGoogle } = useAuth();
   const { downloads, startDownload, removeDownload } = useDownloads();
 
+  const titleTier = title?.tts_tier || 'basic';
   const filteredVoices = voices.filter(v => {
+    if (titleTier === 'pro' && v.tier !== 'pro') return false;
+    if (titleTier === 'basic' && v.tier === 'pro') return false;
     if (filterGender && v.gender !== filterGender) return false;
     if (filterStyle && v.style !== filterStyle) return false;
     return true;
   });
 
-  const styleTags = [...new Set(voices.map(v => v.style))].sort();
+  const styleTags = [...new Set(voices.filter(v => titleTier === 'pro' ? v.tier === 'pro' : (v.tier === 'basic' || !v.tier)).map(v => v.style))].sort();
 
   useEffect(() => {
     if (!user || !id) return;
@@ -139,7 +142,7 @@ export default function TitleDetail() {
         setLinkedDoc(doc);
         setChapterName(doc.title);
       }
-    } catch (err) {
+    } catch {
       setError('Failed to open Google Picker. Please ensure popups are allowed and you are signed in.');
     }
   };
@@ -383,9 +386,22 @@ export default function TitleDetail() {
                     <md-icon><span className="material-symbols-outlined">book</span></md-icon>
                     {title?.name || 'Loading Book...'}
                 </h2>
-                {title?.ai_casting_enabled && (
-                    <span style={{ fontSize: '0.75rem', padding: '4px 12px', borderRadius: '100px', backgroundColor: 'var(--md-sys-color-primary-container)', color: 'var(--md-sys-color-on-primary-container)', fontWeight: 600 }}>AI CASTING ENABLED</span>
-                )}
+                <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                    <span style={{
+                      fontSize: '0.75rem',
+                      padding: '4px 12px',
+                      borderRadius: '100px',
+                      backgroundColor: title?.tts_tier === 'pro' ? 'rgba(156, 39, 176, 0.15)' : 'rgba(33, 150, 243, 0.15)',
+                      color: title?.tts_tier === 'pro' ? '#d81b60' : '#1976d2',
+                      border: `1px solid ${title?.tts_tier === 'pro' ? '#d81b60' : '#1976d2'}`,
+                      fontWeight: 700
+                    }}>
+                      {title?.tts_tier === 'pro' ? 'PRO (GEMINI TTS)' : 'BASIC (CHIRP3)'}
+                    </span>
+                    {title?.ai_casting_enabled && (
+                        <span style={{ fontSize: '0.75rem', padding: '4px 12px', borderRadius: '100px', backgroundColor: 'var(--md-sys-color-primary-container)', color: 'var(--md-sys-color-on-primary-container)', fontWeight: 600 }}>AI CASTING ENABLED</span>
+                    )}
+                </div>
             </div>
 
             {title?.ai_casting_enabled && Object.keys(castingMap).length > 0 && (
@@ -623,7 +639,7 @@ export default function TitleDetail() {
 
                     {linkedDoc ? (
                     <div style={{ padding: '1.5rem', borderRadius: '1.25rem', backgroundColor: 'var(--md-sys-color-secondary-container)', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-                        <span style={{ fontWeight: 600 }}>{linkedDoc.title}</span>
+                        <span style={{ fontWeight: 600 }}>{linkedDoc.title} {syncing && <span style={{ fontSize: '0.8rem', opacity: 0.8 }}>(Syncing...)</span>}</span>
                         <md-icon-button onClick={() => setLinkedDoc(null)}><md-icon>close</md-icon></md-icon-button>
                     </div>
                     ) : (
