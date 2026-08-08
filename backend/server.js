@@ -167,10 +167,20 @@ function breakContentIntoSections(content) {
 async function deleteChapterSections(chapterId) {
   try {
     const sections = await db.getSections(chapterId);
-    if (sections.length === 0) return;
 
     const admin = require('./firebase-config');
     const batch = admin.firestore().batch();
+
+    // Bump so clients with an offline-downloaded copy of this chapter's audio
+    // know it's stale (the audio no longer matches the chapter's content/voice).
+    batch.update(admin.firestore().collection('chapters').doc(chapterId), {
+      audio_version: admin.firestore.FieldValue.increment(1)
+    });
+
+    if (sections.length === 0) {
+      await batch.commit();
+      return;
+    }
 
     sections.forEach(s => {
       // Delete from DB
@@ -562,6 +572,110 @@ app.delete('/api/chapters/:id', async (req, res) => {
   }
 });
 
+function escapeXml(unsafe) {
+  return unsafe.replace(/[<>&'"]/g, (c) => {
+    switch (c) {
+      case '<': return '&lt;';
+      case '>': return '&gt;';
+      case '&': return '&amp;';
+      case '\'': return '&apos;';
+      case '"': return '&quot;';
+      default: return c;
+    }
+  });
+}
+
+// Synthesizes a section's audio via TTS and caches it to disk + Firestore.
+// Returns the audio buffer on success, or null if synthesis failed (logged,
+// not thrown, so callers can decide how to handle a single failed section).
+async function synthesizeAndCacheSection(chapter, section, localPath) {
+  const ssmlContent = chapter.is_ssml
+    // Section content is already valid SSML (including <speak> tags from splitSSMLIntoSections)
+    ? section.content
+    : `<speak>${escapeXml(section.content)}<break time="500ms"/></speak>`;
+
+  const request = {
+    input: { ssml: ssmlContent },
+    voice: { languageCode: 'en-US', name: chapter.voice_id || 'en-US-Chirp3-HD-Aoede' },
+    audioConfig: { audioEncoding: 'MP3' },
+  };
+  try {
+    debugLog(`Generating audio for ${section.id}`);
+    const [response] = await ttsClient.synthesizeSpeech(request);
+    const audioBuffer = response.audioContent;
+
+    fs.writeFileSync(localPath, audioBuffer);
+    await db.updateSection(section.id, { status: 'generated', audio_file_path: localPath });
+    return audioBuffer;
+  } catch (e) {
+    debugLog(`Error generating audio: ${e.message}`);
+    return null;
+  }
+}
+
+// Reads a cached section's audio from disk, tolerating transient read
+// failures (e.g. a GCS FUSE hiccup) by returning null so the caller can
+// regenerate instead of aborting.
+function readCachedSection(localPath, sectionId) {
+  if (!fs.existsSync(localPath)) return null;
+  try {
+    return fs.readFileSync(localPath);
+  } catch (e) {
+    debugLog(`Error reading cached audio for ${sectionId}, regenerating: ${e.message}`);
+    return null;
+  }
+}
+
+app.post('/api/chapters/:chapterId/prepare', authMiddleware, async (req, res) => {
+  const { chapterId } = req.params;
+  const TIME_BUDGET_MS = 50000; // stay comfortably under typical intermediary timeouts
+
+  const deadline = Date.now() + TIME_BUDGET_MS;
+
+  try {
+    const chapter = await db.getChapter(chapterId);
+    if (!chapter) return res.status(404).json({ error: 'Chapter not found' });
+    const title = await db.getTitle(chapter.title_id, req.clientId, req.userId);
+    if (!title) return res.status(403).json({ error: 'Forbidden' });
+
+    const sections = await db.getSections(chapterId, 0);
+    let generatedCount = 0;
+    let totalBytes = 0;
+
+    for (const section of sections) {
+      const localPath = path.join(audioDir, `${section.id}.mp3`);
+
+      const cached = readCachedSection(localPath, section.id);
+      if (cached) {
+        generatedCount++;
+        totalBytes += cached.length;
+        continue;
+      }
+
+      if (Date.now() > deadline) break; // out of budget this round - client will poll again
+
+      const audioBuffer = await synthesizeAndCacheSection(chapter, section, localPath);
+      if (audioBuffer) {
+        generatedCount++;
+        totalBytes += audioBuffer.length;
+      }
+    }
+
+    const ready = generatedCount === sections.length;
+    res.json({
+      totalSections: sections.length,
+      generatedSections: generatedCount,
+      ready,
+      // Only meaningful once ready - lets the client show an exact
+      // percentage for the final download phase instead of guessing.
+      totalBytes: ready ? totalBytes : undefined
+    });
+  } catch (error) {
+    debugLog(`Prepare error for ${chapterId}: ${error.message}`);
+    res.status(500).json({ error: error.message });
+  }
+});
+
 app.get('/api/chapters/:chapterId/stream', async (req, res) => {
   const { chapterId } = req.params;
   debugLog(`Stream Request for ${chapterId}: token_present=${!!req.query.token}, user_id=${req.userId}`);
@@ -586,66 +700,25 @@ app.get('/api/chapters/:chapterId/stream', async (req, res) => {
 
     res.setHeader('Transfer-Encoding', 'chunked');
 
-    const silentMp3 = Buffer.from('//uQxAAAAAAAAAAAAAAAAAAAAAAAWGluZwAAAA8AAAACAAACcQCAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICA/wAAAP8AAAD/AAAA/wAAAP8AAAD/AAAA/wAAAP8AAAD/AAAA/wAAAP8AAAD/AAAA/wAAAP8AAAD/AAAA/wAAAP8AAAAA', 'base64');
-    const pauseBuffer = Buffer.concat(Array(15).fill(silentMp3));
-
     for (const section of sections) {
       if (isClosed) break;
       const localPath = path.join(audioDir, `${section.id}.mp3`);
 
-      let audioBuffer;
-      let alreadyExists = false;
+      const audioBuffer = readCachedSection(localPath, section.id)
+        || await synthesizeAndCacheSection(chapter, section, localPath);
 
-      if (fs.existsSync(localPath)) {
-        audioBuffer = fs.readFileSync(localPath);
-        alreadyExists = true;
-      }
-
-      if (alreadyExists) {
-        res.write(audioBuffer);
-      } else {
-        const escapeXml = (unsafe) => {
-          return unsafe.replace(/[<>&'"]/g, (c) => {
-            switch (c) {
-              case '<': return '&lt;';
-              case '>': return '&gt;';
-              case '&': return '&amp;';
-              case '\'': return '&apos;';
-              case '"': return '&quot;';
-              default: return c;
-            }
-          });
-        };
-
-        let ssmlContent;
-        if (chapter.is_ssml) {
-          // Section content is already valid SSML (including <speak> tags from splitSSMLIntoSections)
-          ssmlContent = section.content;
-        } else {
-          ssmlContent = `<speak>${escapeXml(section.content)}<break time="500ms"/></speak>`;
-        }
-
-        const request = {
-          input: { ssml: ssmlContent },
-          voice: { languageCode: 'en-US', name: chapter.voice_id || 'en-US-Chirp3-HD-Aoede' },
-          audioConfig: { audioEncoding: 'MP3' },
-        };
-        try {
-          debugLog(`Generating audio for ${section.id}`);
-          const [response] = await ttsClient.synthesizeSpeech(request);
-          audioBuffer = response.audioContent;
-
-          fs.writeFileSync(localPath, audioBuffer);
-          await db.updateSection(section.id, { status: 'generated', audio_file_path: localPath });
-          res.write(audioBuffer);
-        } catch (e) {
-          debugLog(`Error generating audio: ${e.message}`);
-        }
-      }
+      if (audioBuffer) res.write(audioBuffer);
     }
-    res.end();
+    if (!isClosed) res.end();
   } catch (error) {
-    res.end();
+    debugLog(`Stream error for ${chapterId}: ${error.message}`);
+    // Abort the connection instead of gracefully ending it, so the client's
+    // fetch sees a failed request rather than a silently truncated "success".
+    if (res.headersSent) {
+      res.destroy();
+    } else {
+      res.status(500).end();
+    }
   }
 });
 

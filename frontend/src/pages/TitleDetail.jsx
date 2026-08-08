@@ -3,6 +3,7 @@ import { useParams, Link, useNavigate } from 'react-router-dom';
 import { api } from '../lib/api';
 import { openGooglePicker } from '../lib/googlePicker';
 import { useAuth } from '../context/AuthContext';
+import { useDownloads, getDownloadProgressFraction } from '../context/DownloadsContext';
 import { db } from '../lib/firebase';
 import { doc, collection, query, where, onSnapshot, orderBy, getDoc } from 'firebase/firestore';
 
@@ -33,6 +34,7 @@ export default function TitleDetail() {
   const [error, setError] = useState(null);
   
   const { user, googleAccessToken, getToken, loginWithGoogle } = useAuth();
+  const { downloads, startDownload, removeDownload } = useDownloads();
 
   const filteredVoices = voices.filter(v => {
     if (filterGender && v.gender !== filterGender) return false;
@@ -208,6 +210,41 @@ export default function TitleDetail() {
     } catch (e) {
       console.error(e);
     }
+  };
+
+  const handleDownloadChapter = async (chapter) => {
+    const token = await getToken();
+    await startDownload(chapter, title?.name, token);
+  };
+
+  const renderDownloadButton = (chapter) => {
+    const dl = downloads[chapter.id];
+    const status = dl?.status || 'none';
+    const isStale = status === 'downloaded' && chapter.audio_version != null && dl.audioVersion != null && dl.audioVersion !== chapter.audio_version;
+
+    if (status === 'preparing' || status === 'downloading') {
+      const fraction = getDownloadProgressFraction(dl) ?? 0;
+      const title = status === 'preparing'
+        ? (dl.total ? `Preparing audio… ${dl.progress}/${dl.total}` : 'Preparing audio…')
+        : `Downloading… ${Math.round(fraction * 100)}%`;
+      return (
+        <md-circular-progress value={fraction} title={title} style={{ '--md-circular-progress-size': '20px' }}></md-circular-progress>
+      );
+    }
+
+    if (status === 'downloaded' && !isStale) {
+      return (
+        <md-icon-button onClick={() => removeDownload(chapter.id)} title="Downloaded for offline listening — tap to remove">
+          <md-icon style={{ color: 'var(--md-sys-color-tertiary)' }}><span className="material-symbols-outlined">download_done</span></md-icon>
+        </md-icon-button>
+      );
+    }
+
+    return (
+      <md-icon-button onClick={() => handleDownloadChapter(chapter)} title={isStale ? 'Chapter audio was updated — tap to re-download' : 'Download for offline listening'}>
+        <md-icon><span className="material-symbols-outlined">download</span></md-icon>
+      </md-icon-button>
+    );
   };
 
   const VoiceSelector = ({ onSelect, currentVoiceId }) => {
@@ -466,6 +503,7 @@ export default function TitleDetail() {
                               {chapter.is_ssml && (
                                  <md-icon style={{ color: 'var(--md-sys-color-tertiary)', marginRight: '0.5rem' }} title="AI Casted"><span className="material-symbols-outlined">verified</span></md-icon>
                               )}
+                              {renderDownloadButton(chapter)}
                               <md-icon-button onClick={() => { setEditingChapterId(chapter.id); setEditChapterName(chapter.name || `Chapter ${chapter.order_index}`); }}>
                                 <md-icon><span className="material-symbols-outlined">edit</span></md-icon>
                               </md-icon-button>

@@ -1,8 +1,12 @@
 import { StrictMode } from 'react'
 import { createRoot } from 'react-dom/client'
+import { registerSW } from 'virtual:pwa-register'
 import './index.css'
 import App from './App.jsx'
 import { AuthProvider } from './context/AuthContext'
+import { DownloadsProvider } from './context/DownloadsContext'
+
+registerSW({ immediate: true })
 
 // Import Material Web Components to register them
 import '@material/web/button/filled-button.js';
@@ -33,7 +37,9 @@ console.log('main.jsx: Starting React initialization...');
 createRoot(document.getElementById('root')).render(
   <StrictMode>
     <AuthProvider>
-      <App />
+      <DownloadsProvider>
+        <App />
+      </DownloadsProvider>
     </AuthProvider>
   </StrictMode>,
 )
