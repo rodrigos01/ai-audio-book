@@ -640,35 +640,25 @@ app.post('/api/chapters/:chapterId/prepare', authMiddleware, async (req, res) =>
 
     const sections = await db.getSections(chapterId, 0);
     let generatedCount = 0;
-    let totalBytes = 0;
 
     for (const section of sections) {
       const localPath = path.join(audioDir, `${section.id}.mp3`);
 
-      const cached = readCachedSection(localPath, section.id);
-      if (cached) {
+      if (readCachedSection(localPath, section.id)) {
         generatedCount++;
-        totalBytes += cached.length;
         continue;
       }
 
       if (Date.now() > deadline) break; // out of budget this round - client will poll again
 
       const audioBuffer = await synthesizeAndCacheSection(chapter, section, localPath);
-      if (audioBuffer) {
-        generatedCount++;
-        totalBytes += audioBuffer.length;
-      }
+      if (audioBuffer) generatedCount++;
     }
 
-    const ready = generatedCount === sections.length;
     res.json({
       totalSections: sections.length,
       generatedSections: generatedCount,
-      ready,
-      // Only meaningful once ready - lets the client show an exact
-      // percentage for the final download phase instead of guessing.
-      totalBytes: ready ? totalBytes : undefined
+      ready: generatedCount === sections.length
     });
   } catch (error) {
     debugLog(`Prepare error for ${chapterId}: ${error.message}`);
