@@ -687,13 +687,25 @@ function getGcpVoiceName(voiceId) {
   return geminiMap[voiceId] || 'en-US-Journey-F';
 }
 
+const VALID_GEMINI_VOICES = new Set([
+  'Achernar', 'Aoede', 'Autonoe', 'Callirrhoe', 'Despina', 'Erinome', 'Gacrux', 'Kore',
+  'Laomedeia', 'Pulcherrima', 'Sulafat', 'Vindemiatrix', 'Zephyr', 'Orus', 'Achird',
+  'Algenib', 'Algieba', 'Alnilam', 'Enceladus', 'Iapetus', 'Puck', 'Rasalgethi',
+  'Sadachbia', 'Sadaltager', 'Schedar', 'Umbriel', 'Charon', 'Fenrir', 'Leda'
+]);
+
 function toGeminiVoiceId(voiceId) {
   if (!voiceId) return 'Aoede';
   const parts = voiceId.split('-');
   const shortName = parts[parts.length - 1];
   if (shortName === 'Orpheus') return 'Charon';
   if (shortName === 'Callisto') return 'Leda';
-  return shortName || 'Aoede';
+  if (VALID_GEMINI_VOICES.has(shortName)) return shortName;
+  
+  const found = [...VALID_GEMINI_VOICES].find(v => v.toLowerCase() === shortName.toLowerCase());
+  if (found) return found;
+
+  return null;
 }
 
 function extractSpeakerConfigsFromText(text, castingMap, narratorVoice) {
@@ -708,15 +720,34 @@ function extractSpeakerConfigsFromText(text, castingMap, narratorVoice) {
     if (match) {
       const alias = match[1];
       if (!addedAliases.has(alias)) {
-        let voiceId;
+        let voiceId = null;
+
         if (castingMap && castingMap[alias]) {
           voiceId = toGeminiVoiceId(castingMap[alias]);
-        } else {
-          const foundKey = Object.keys(castingMap || {}).find(k => k.toLowerCase() === alias.toLowerCase());
+        }
+
+        if (!voiceId && castingMap) {
+          const foundKey = Object.keys(castingMap).find(k => k.toLowerCase() === alias.toLowerCase());
           if (foundKey) {
             voiceId = toGeminiVoiceId(castingMap[foundKey]);
-          } else {
-            voiceId = toGeminiVoiceId(alias);
+          }
+        }
+
+        if (!voiceId) {
+          voiceId = toGeminiVoiceId(alias);
+        }
+
+        if (!voiceId && alias.toLowerCase() === 'narrator') {
+          voiceId = toGeminiVoiceId(narratorVoice);
+        }
+
+        // Guarantee distinct voices across characters in the section
+        if (!voiceId || usedVoiceIds.has(voiceId)) {
+          const availableVoice = [...VALID_GEMINI_VOICES].find(v => !usedVoiceIds.has(v));
+          if (availableVoice) {
+            voiceId = availableVoice;
+          } else if (!voiceId) {
+            voiceId = toGeminiVoiceId(narratorVoice) || 'Aoede';
           }
         }
 
@@ -729,7 +760,7 @@ function extractSpeakerConfigsFromText(text, castingMap, narratorVoice) {
 
   // Fallback: If text had no lines with "Alias:", add Narrator with narratorVoice
   if (speakerConfigs.length === 0) {
-    const defaultNarrator = toGeminiVoiceId(narratorVoice);
+    const defaultNarrator = toGeminiVoiceId(narratorVoice) || 'Aoede';
     speakerConfigs.push({ speakerAlias: 'Narrator', speakerId: defaultNarrator });
   }
 
@@ -784,22 +815,42 @@ async function synthesizeAndCacheSection(title, chapter, section, localPath) {
     const performancePrompt = (chapter && chapter.performance_prompt)
       || "Synthesize the text as a multi-speaker dramatic audiobook performance with distinct character voices and natural emotional expressions.";
 
-    request = {
-      input: {
-        prompt: performancePrompt,
-        text: textContent
-      },
-      voice: {
-        languageCode: 'en-US',
-        modelName: 'gemini-3.1-flash-tts-preview',
-        multiSpeakerVoiceConfig: {
-          speakerVoiceConfigs: speakerConfigs
+    if (speakerConfigs.length >= 2) {
+      request = {
+        input: {
+          prompt: performancePrompt,
+          text: textContent
+        },
+        voice: {
+          languageCode: 'en-US',
+          modelName: 'gemini-3.1-flash-tts-preview',
+          multiSpeakerVoiceConfig: {
+            speakerVoiceConfigs: speakerConfigs
+          }
+        },
+        audioConfig: {
+          audioEncoding: 'MP3'
         }
-      },
-      audioConfig: {
-        audioEncoding: 'MP3'
-      }
-    };
+      };
+    } else {
+      const singleVoice = speakerConfigs.length > 0 ? speakerConfigs[0].speakerId : toGeminiVoiceId(narratorVoice);
+      // Strip character attributions (e.g. "Narrator:", "Desmond:", "Nora:") for single-speaker mode
+      const cleanSingleSpeakerText = textContent.replace(/^([a-zA-Z0-9]+):\s*/gm, '').trim();
+      request = {
+        input: {
+          prompt: performancePrompt,
+          text: cleanSingleSpeakerText
+        },
+        voice: {
+          languageCode: 'en-US',
+          modelName: 'gemini-3.1-flash-tts-preview',
+          name: singleVoice
+        },
+        audioConfig: {
+          audioEncoding: 'MP3'
+        }
+      };
+    }
   } else {
     // Single speaker plain text fallback
     const textContent = (section.content || '').replace(/<[^>]*>/g, '').trim();

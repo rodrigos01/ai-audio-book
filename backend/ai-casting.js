@@ -70,10 +70,11 @@ class AICastingService {
 
             ### Instructions:
             1. Identify every character with dialogue in this chapter.
-            2. For characters in the "Current Title Cast", you MUST reuse their assigned voice ID.
-            3. For new characters, assign a voice from the "Available Voices" that matches their characteristics, personality, and gender.
+            2. Use simple, single-word names (usually first names, e.g. "Alice" instead of "Dr. Alice Smith", "Kerem" instead of "Kerem Al-Mansoor", "Desmond" instead of "Desmond Vance") for character names in the casting map.
+            3. For characters in the "Current Title Cast", you MUST reuse their assigned voice ID.
+            4. For new characters, assign a voice from the "Available Voices" that matches their characteristics, personality, and gender.
                 - DO NOT assign the same voice to multiple characters.
-            4. Assign a Narrator voice. ${existingNarrator ? `You MUST reuse the existing narrator voice (${existingNarrator}).` : 'ONLY if the content is NOT a first person narrative, select a voice from the "Available Voices". Otherwise, use the same voice as the main character.'}
+            5. Assign a Narrator voice. ${existingNarrator ? `You MUST reuse the existing narrator voice (${existingNarrator}).` : 'ONLY if the content is NOT a first person narrative, select a voice from the "Available Voices". Otherwise, use the same voice as the main character.'}
 
             ### Chapter Text:
             ${chapterText}
@@ -134,10 +135,11 @@ class AICastingService {
 
                 ### Instructions:
                 1. Format every speaker turn on a new line starting with "SpeakerAlias: Dialogue" (e.g. "Narrator: ...", "Alice: ...").
-                2. SpeakerAlias MUST consist solely of alphanumeric characters without spaces (e.g. use "Narrator" for narration, "Alice" for Alice, "Bob" for Bob).
-                3. Add natural language vocal and emotional cues inside brackets within turns (e.g. "[whispering]", "[excitedly]", "[sighs]", "[softly]", "[pause]") to instruct tone, emotion, and rhythm for performance.
-                4. Strip mechanical dialogue attributions (e.g. "she whispered") when translated into natural vocal performance cues ("[whispering]").
-                5. DO NOT use any SSML or XML tags (<speak>, <voice>, <p>, etc.). Output strictly natural multi-speaker script text.
+                2. SpeakerAlias MUST use EXACTLY the character name key from the provided "Casting Map to Use" (e.g. if the casting map key is "Desmond", use "Desmond:"; if "Nora", use "Nora:"; for narration, use "Narrator:"). Do not invent alias variations or use full names if the casting map specifies simple names.
+                3. SpeakerAlias MUST consist solely of alphanumeric characters without spaces (e.g. use "Narrator" for narration, "Alice" for Alice, "Bob" for Bob).
+                4. Add natural language vocal and emotional cues inside brackets within turns (e.g. "[whispering]", "[excitedly]", "[sighs]", "[softly]", "[pause]") to instruct tone, emotion, and rhythm for performance.
+                5. Strip mechanical dialogue attributions (e.g. "she whispered") when translated into natural vocal performance cues ("[whispering]").
+                6. DO NOT use any SSML or XML tags (<speak>, <voice>, <p>, etc.). Output strictly natural multi-speaker script text.
 
                 ### Chapter Text:
                 ${chapterText}
