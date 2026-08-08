@@ -354,3 +354,9 @@ h3 {
 ::-webkit-scrollbar-thumb:hover {
   background: var(--surface-hover);
 }
+
+/* Google Picker overlay z-index fix */
+.picker-dialog,
+.picker-dialog-bg {
+  z-index: 10000 !important;
+}

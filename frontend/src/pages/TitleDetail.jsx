@@ -1,4 +1,4 @@
-import { useEffect, useState, useCallback } from 'react';
+import { useEffect, useState, useCallback, useRef } from 'react';
 import { useParams, Link, useNavigate } from 'react-router-dom';
 import { api } from '../lib/api';
 import { openGooglePicker } from '../lib/googlePicker';
@@ -31,7 +31,9 @@ export default function TitleDetail() {
   const [castingMap, setCastingMap] = useState({}); // { "Character": "voice-id" }
   const [changingCharacter, setChangingCharacter] = useState(null); // Character name being changed
   const [showAddDialog, setShowAddDialog] = useState(false);
+  const [showImportMenu, setShowImportMenu] = useState(false);
   const [error, setError] = useState(null);
+  const fileInputRef = useRef(null);
   
   const { user, googleAccessToken, getToken, loginWithGoogle } = useAuth();
   const { downloads, startDownload, removeDownload } = useDownloads();
@@ -145,6 +147,24 @@ export default function TitleDetail() {
     } catch {
       setError('Failed to open Google Picker. Please ensure popups are allowed and you are signed in.');
     }
+  };
+
+  const handleLocalFileUpload = (e) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+
+    const reader = new FileReader();
+    reader.onload = (event) => {
+      const text = event.target?.result || '';
+      setNewContent(text);
+      if (!chapterName.trim()) {
+        const nameWithoutExt = file.name.replace(/\.[^/.]+$/, '');
+        setChapterName(nameWithoutExt);
+      }
+      setLinkedDoc(null);
+    };
+    reader.readAsText(file);
+    e.target.value = '';
   };
 
   const handleAddChapter = async (e) => {
@@ -629,12 +649,91 @@ export default function TitleDetail() {
                         onInput={(e) => setChapterName(e.target.value)}
                         style={{ flex: 1 }}
                     ></md-outlined-text-field>
-                    {user && !user.isAnonymous && (
-                        <md-filled-button onClick={handleImportGoogleDoc} style={{ '--md-filled-button-container-color': 'var(--md-sys-color-tertiary)' }}>
+                    <div style={{ position: 'relative' }}>
+                      <input
+                        type="file"
+                        ref={fileInputRef}
+                        accept=".txt,text/plain"
+                        style={{ display: 'none' }}
+                        onChange={handleLocalFileUpload}
+                      />
+                      <md-filled-button
+                        type="button"
+                        onClick={() => setShowImportMenu(!showImportMenu)}
+                        style={{ '--md-filled-button-container-color': 'var(--md-sys-color-tertiary)' }}
+                      >
                         <md-icon slot="icon"><span className="material-symbols-outlined">cloud_download</span></md-icon>
                         Import
-                        </md-filled-button>
-                    )}
+                        <md-icon slot="icon"><span className="material-symbols-outlined">arrow_drop_down</span></md-icon>
+                      </md-filled-button>
+
+                      {showImportMenu && (
+                        <div
+                          style={{
+                            position: 'absolute',
+                            right: 0,
+                            top: '100%',
+                            marginTop: '0.5rem',
+                            backgroundColor: 'var(--md-sys-color-surface-container-high)',
+                            borderRadius: '1rem',
+                            border: '1px solid var(--md-sys-color-outline-variant)',
+                            boxShadow: '0 8px 24px rgba(0,0,0,0.4)',
+                            zIndex: 4000,
+                            minWidth: '180px',
+                            overflow: 'hidden'
+                          }}
+                        >
+                          {user && !user.isAnonymous && (
+                            <div
+                              onClick={() => {
+                                setShowImportMenu(false);
+                                handleImportGoogleDoc();
+                              }}
+                              style={{
+                                padding: '0.85rem 1.25rem',
+                                display: 'flex',
+                                alignItems: 'center',
+                                gap: '0.75rem',
+                                cursor: 'pointer',
+                                color: 'var(--md-sys-color-on-surface)',
+                                fontSize: '0.9rem',
+                                fontWeight: 500
+                              }}
+                              onMouseEnter={(e) => e.currentTarget.style.backgroundColor = 'var(--md-sys-color-surface-container-highest)'}
+                              onMouseLeave={(e) => e.currentTarget.style.backgroundColor = 'transparent'}
+                            >
+                              <md-icon style={{ color: 'var(--md-sys-color-primary)', fontSize: '20px' }}>
+                                <span className="material-symbols-outlined">cloud_download</span>
+                              </md-icon>
+                              <span>Google Drive</span>
+                            </div>
+                          )}
+                          <div
+                            onClick={() => {
+                              setShowImportMenu(false);
+                              fileInputRef.current?.click();
+                            }}
+                            style={{
+                              padding: '0.85rem 1.25rem',
+                              display: 'flex',
+                              alignItems: 'center',
+                              gap: '0.75rem',
+                              cursor: 'pointer',
+                              color: 'var(--md-sys-color-on-surface)',
+                              fontSize: '0.9rem',
+                              fontWeight: 500
+                            }}
+                            onMouseEnter={(e) => e.currentTarget.style.backgroundColor = 'var(--md-sys-color-surface-container-highest)'}
+                            onMouseLeave={(e) => e.currentTarget.style.backgroundColor = 'transparent'}
+                          >
+                            <md-icon style={{ color: 'var(--md-sys-color-primary)', fontSize: '20px' }}>
+                              <span className="material-symbols-outlined">upload_file</span>
+                            </md-icon>
+                            <span>Upload File</span>
+                          </div>
+                        </div>
+                      )}
+                    </div>
                     </div>
 
                     {linkedDoc ? (
