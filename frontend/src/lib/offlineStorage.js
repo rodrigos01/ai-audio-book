@@ -42,8 +42,21 @@ async function withStore(mode, callback) {
 }
 
 // record: { chapterId, titleId, chapterName, orderIndex, titleName, audioVersion, sizeBytes, downloadedAt, blob }
+//
+// Blobs are stored as a plain ArrayBuffer + mimeType rather than as a Blob
+// object - storing Blobs directly in IndexedDB is unreliable on some
+// browsers (notably WebKit), while ArrayBuffers are universally safe to
+// structured-clone. The Blob is reconstructed on the way out.
 export async function putDownload(record) {
-  await withStore('readwrite', (store) => store.put(record));
+  const { blob, ...rest } = record;
+  const audioBuffer = await blob.arrayBuffer();
+  await withStore('readwrite', (store) => store.put({ ...rest, audioBuffer, mimeType: blob.type }));
+}
+
+function toBlobRecord(stored) {
+  if (!stored) return null;
+  const { audioBuffer, mimeType, ...rest } = stored;
+  return { ...rest, blob: new Blob([audioBuffer], { type: mimeType || 'audio/mpeg' }) };
 }
 
 export async function getDownload(chapterId) {
@@ -51,7 +64,7 @@ export async function getDownload(chapterId) {
   return new Promise((resolve, reject) => {
     const tx = db.transaction(STORE_NAME, 'readonly');
     const request = tx.objectStore(STORE_NAME).get(chapterId);
-    request.onsuccess = () => resolve(request.result || null);
+    request.onsuccess = () => resolve(toBlobRecord(request.result));
     request.onerror = () => reject(request.error);
   });
 }
@@ -65,7 +78,7 @@ export async function getAllDownloads() {
   return new Promise((resolve, reject) => {
     const tx = db.transaction(STORE_NAME, 'readonly');
     const request = tx.objectStore(STORE_NAME).getAll();
-    request.onsuccess = () => resolve(request.result || []);
+    request.onsuccess = () => resolve((request.result || []).map(toBlobRecord));
     request.onerror = () => reject(request.error);
   });
 }
