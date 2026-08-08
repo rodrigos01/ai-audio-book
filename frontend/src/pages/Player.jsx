@@ -329,7 +329,7 @@ export default function Player() {
       const fraction = getDownloadProgressFraction(dl) ?? 0;
       const title = status === 'preparing'
         ? (dl.total ? `Preparing audio… ${dl.progress}/${dl.total}` : 'Preparing audio…')
-        : `Downloading… ${Math.round(fraction * 100)}%`;
+        : 'Downloading…';
       return <md-circular-progress value={fraction} title={title} style={{ '--md-circular-progress-size': '24px' }}></md-circular-progress>;
     }
 
