@@ -220,14 +220,22 @@ export default function TitleDetail() {
   const renderDownloadButton = (chapter) => {
     const dl = downloads[chapter.id];
     const status = dl?.status || 'none';
-    const isStale = status === 'downloaded' && chapter.audio_version != null && dl.audioVersion != null && dl.audioVersion !== chapter.audio_version;
+    const isStale = status === 'downloaded' && chapter.audio_version != null && (dl.audioVersion ?? null) !== (chapter.audio_version ?? null);
 
     if (status === 'preparing' || status === 'downloading') {
-      const title = status === 'preparing'
-        ? (dl.total ? `Preparing audio… ${dl.progress}/${dl.total}` : 'Preparing audio…')
+      const isPreparing = status === 'preparing';
+      const hasProgress = isPreparing && dl?.total > 0;
+      const progressValue = hasProgress ? Math.max(0, Math.min(1, dl.progress / dl.total)) : 0;
+      const title = isPreparing
+        ? (dl?.total ? `Preparing audio… ${dl.progress}/${dl.total}` : 'Preparing audio…')
         : 'Downloading…';
       return (
-        <md-circular-progress indeterminate title={title} style={{ '--md-circular-progress-size': '20px' }}></md-circular-progress>
+        <md-circular-progress
+          indeterminate={!hasProgress}
+          value={progressValue}
+          title={title}
+          style={{ '--md-circular-progress-size': '20px' }}
+        ></md-circular-progress>
       );
     }
 

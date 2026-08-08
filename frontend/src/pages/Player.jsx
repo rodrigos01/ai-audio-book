@@ -81,26 +81,35 @@ export default function Player() {
     let networkError = null;
 
     try {
-      if (!user) throw new Error('Not signed in');
-      const token = await getToken();
-      setAuthToken(token);
+      if (user) {
+        try {
+          const token = await getToken();
+          setAuthToken(token);
+        } catch (tokenErr) {
+          console.warn('Failed to get auth token (might be offline):', tokenErr);
+        }
+      }
 
       // 1. Get Chapter
       const chapterRef = doc(db, 'chapters', chapterId);
       const chapterSnap = await getDoc(chapterRef);
-      if (!chapterSnap.exists()) throw new Error('Chapter not found');
-      chapterData = { id: chapterSnap.id, ...chapterSnap.data() };
+      if (chapterSnap.exists()) {
+        chapterData = { id: chapterSnap.id, ...chapterSnap.data() };
+      }
 
       // 2. Get Title (for title name and permission check)
-      const titleRef = doc(db, 'titles', chapterData.title_id);
-      const titleSnap = await getDoc(titleRef);
-      if (!titleSnap.exists()) throw new Error('Parent book not found');
-      titleData = titleSnap.data();
+      if (chapterData) {
+        const titleRef = doc(db, 'titles', chapterData.title_id);
+        const titleSnap = await getDoc(titleRef);
+        if (titleSnap.exists()) {
+          titleData = titleSnap.data();
+        }
+      }
 
       // A downloaded copy only needs streaming section data if it's stale
       // (audio was regenerated since it was downloaded) or missing entirely.
-      const recordMatches = record && record.audioVersion === (chapterData.audio_version ?? null);
-      if (!recordMatches) {
+      const recordMatches = record && (!chapterData || (record.audioVersion ?? null) === (chapterData.audio_version ?? null));
+      if (chapterData && !recordMatches) {
         const q = query(
           collection(db, 'chapter_sections'),
           where('chapter_id', '==', chapterId),
@@ -127,7 +136,7 @@ export default function Player() {
       offlineUrlRef.current = null;
     }
 
-    const useOffline = !!record && (!chapterData || record.audioVersion === (chapterData.audio_version ?? null));
+    const useOffline = !!record && (!chapterData || (record.audioVersion ?? null) === (chapterData.audio_version ?? null));
 
     if (useOffline) {
       const url = URL.createObjectURL(record.blob);
@@ -140,7 +149,8 @@ export default function Player() {
         name: chapterData?.name ?? record.chapterName,
         order_index: chapterData?.order_index ?? record.orderIndex,
         title_name: titleData?.name ?? record.titleName,
-        audio_version: chapterData?.audio_version
+        audio_version: chapterData?.audio_version ?? record.audioVersion,
+        estimated_duration_seconds: record.durationSeconds || totalEst || undefined
       });
     } else if (chapterData && titleData) {
       setOfflineUrl(null);
@@ -323,13 +333,23 @@ export default function Player() {
     if (!chapter) return null;
     const dl = downloads[chapter.id];
     const status = dl?.status || 'none';
-    const isStale = status === 'downloaded' && chapter.audio_version != null && dl.audioVersion != null && dl.audioVersion !== chapter.audio_version;
+    const isStale = status === 'downloaded' && chapter.audio_version != null && (dl.audioVersion ?? null) !== (chapter.audio_version ?? null);
 
     if (status === 'preparing' || status === 'downloading') {
-      const title = status === 'preparing'
-        ? (dl.total ? `Preparing audio… ${dl.progress}/${dl.total}` : 'Preparing audio…')
+      const isPreparing = status === 'preparing';
+      const hasProgress = isPreparing && dl?.total > 0;
+      const progressValue = hasProgress ? Math.max(0, Math.min(1, dl.progress / dl.total)) : 0;
+      const title = isPreparing
+        ? (dl?.total ? `Preparing audio… ${dl.progress}/${dl.total}` : 'Preparing audio…')
         : 'Downloading…';
-      return <md-circular-progress indeterminate title={title} style={{ '--md-circular-progress-size': '24px' }}></md-circular-progress>;
+      return (
+        <md-circular-progress
+          indeterminate={!hasProgress}
+          value={progressValue}
+          title={title}
+          style={{ '--md-circular-progress-size': '24px' }}
+        ></md-circular-progress>
+      );
     }
 
     if (status === 'downloaded' && !isStale) {

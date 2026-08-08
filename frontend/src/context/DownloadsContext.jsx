@@ -60,6 +60,7 @@ export const DownloadsProvider = ({ children }) => {
           stallRounds = data.generatedSections === lastGenerated ? stallRounds + 1 : 0;
           lastGenerated = data.generatedSections;
           if (stallRounds >= 3) throw new Error('Chapter preparation stalled');
+          await new Promise((r) => setTimeout(r, 1000));
         }
       }
 
@@ -90,6 +91,7 @@ export const DownloadsProvider = ({ children }) => {
         orderIndex: chapter.order_index,
         titleName,
         audioVersion: chapter.audio_version ?? null,
+        durationSeconds: chapter.estimated_duration_seconds || null,
         sizeBytes: blob.size,
         downloadedAt: Date.now(),
         blob

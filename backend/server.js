@@ -171,11 +171,34 @@ async function deleteChapterSections(chapterId) {
 }
 
 function splitSSMLIntoSections(ssml) {
-  // Strip outer <speak> if present
-  let clean = ssml.replace(/^<speak>\s*/i, '').replace(/\s*<\/speak>$/i, '');
+  if (!ssml) return [];
+  // Strip markdown code fences (e.g. ```xml ... ``` or ```)
+  let clean = ssml.replace(/```[a-z]*\s*/gi, '').replace(/```/gi, '').trim();
+  // Strip outer/inner <speak> and </speak> tags
+  clean = clean.replace(/<\/?speak>/gi, '').trim();
+
   // Split by </p>
-  const parts = clean.split(/<\/p>/i).map(p => p.trim()).filter(p => p.length > 0);
-  return parts.map(p => `<speak>${p}</p></speak>`);
+  const parts = clean.split(/<\/p>/i);
+  const validSections = [];
+
+  for (let p of parts) {
+    let trimmed = p.trim();
+    if (!trimmed) continue;
+    if (!trimmed.toLowerCase().startsWith('<p>')) {
+      trimmed = `<p>${trimmed}`;
+    }
+    if (!trimmed.toLowerCase().endsWith('</p>')) {
+      trimmed = `${trimmed}</p>`;
+    }
+
+    // Filter out paragraphs that contain no speakable text (only XML tags or whitespace)
+    const speakableText = trimmed.replace(/<[^>]*>/g, '').trim();
+    if (speakableText.length > 0) {
+      validSections.push(`<speak>${trimmed}</speak>`);
+    }
+  }
+
+  return validSections;
 }
 
 // Google Docs Parser
@@ -555,22 +578,54 @@ function escapeXml(unsafe) {
   });
 }
 
+function sanitizeSSML(rawContent, isSSML) {
+  if (!rawContent) return '<speak></speak>';
+  if (!isSSML) {
+    return `<speak>${escapeXml(rawContent)}<break time="500ms"/></speak>`;
+  }
+
+  // 1. Strip markdown code fences (```xml ... ``` or ```)
+  let clean = rawContent.replace(/```[a-z]*\s*/gi, '').replace(/```/gi, '').trim();
+
+  // 2. Strip ALL existing <speak> and </speak> tags (including nested/duplicated ones)
+  clean = clean.replace(/<\/?speak\b[^>]*>/gi, '').trim();
+
+  // 3. Wrap in a single, clean <speak> container
+  return `<speak>${clean}</speak>`;
+}
+
 // Synthesizes a section's audio via TTS and caches it to disk + Firestore.
 // Returns the audio buffer on success, or null if synthesis failed (logged,
 // not thrown, so callers can decide how to handle a single failed section).
 async function synthesizeAndCacheSection(chapter, section, localPath) {
-  const ssmlContent = chapter.is_ssml
-    // Section content is already valid SSML (including <speak> tags from splitSSMLIntoSections)
-    ? section.content
-    : `<speak>${escapeXml(section.content)}<break time="500ms"/></speak>`;
+  const ssmlContent = sanitizeSSML(section.content, chapter.is_ssml);
+
+  // Check if there is actual speakable text inside the SSML (strip tags and whitespace)
+  const speakableText = (ssmlContent || '').replace(/<[^>]*>/g, '').trim();
+  if (speakableText.length === 0) {
+    debugLog(`Section ${section.id} contains no speakable text (empty/malformed SSML). Caching silent fallback audio.`);
+    const silentMp3 = Buffer.from('//uQxAAAAAAAAAAAAAAAAAAAAAAAWGluZwAAAA8AAAACAAACcQCAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICA/wAAAP8AAAD/AAAA/wAAAP8AAAD/AAAA/wAAAP8AAAD/AAAA/wAAAP8AAAD/AAAA/wAAAP8AAAD/AAAA/wAAAP8AAAAA', 'base64');
+    fs.writeFileSync(localPath, silentMp3);
+    await db.updateSection(section.id, { status: 'generated', audio_file_path: localPath });
+    return silentMp3;
+  }
+
+  const voiceName = chapter.voice_id || 'en-US-Chirp3-HD-Aoede';
+  let languageCode = 'en-US';
+  if (voiceName.includes('-')) {
+    const parts = voiceName.split('-');
+    if (parts.length >= 2) {
+      languageCode = `${parts[0]}-${parts[1]}`;
+    }
+  }
 
   const request = {
     input: { ssml: ssmlContent },
-    voice: { languageCode: 'en-US', name: chapter.voice_id || 'en-US-Chirp3-HD-Aoede' },
+    voice: { languageCode, name: voiceName },
     audioConfig: { audioEncoding: 'MP3' },
   };
   try {
-    debugLog(`Generating audio for ${section.id}`);
+    debugLog(`Generating audio for section ${section.id}`);
     const [response] = await ttsClient.synthesizeSpeech(request);
     const audioBuffer = response.audioContent;
 
@@ -578,7 +633,10 @@ async function synthesizeAndCacheSection(chapter, section, localPath) {
     await db.updateSection(section.id, { status: 'generated', audio_file_path: localPath });
     return audioBuffer;
   } catch (e) {
-    debugLog(`Error generating audio: ${e.message}`);
+    debugLog(`Error generating audio for section ${section.id}: ${e.message}`);
+    if (e.details) debugLog(`gRPC details: ${e.details}`);
+    if (e.code) debugLog(`gRPC status code: ${e.code}`);
+    debugLog(`Failed TTS Request Params: voice="${voiceName}", languageCode="${languageCode}", is_ssml=${!!chapter.is_ssml}, ssml_len=${ssmlContent?.length}, snippet=${JSON.stringify(ssmlContent?.slice(0, 200))}`);
     return null;
   }
 }
@@ -601,6 +659,8 @@ app.post('/api/chapters/:chapterId/prepare', authMiddleware, async (req, res) =>
   const TIME_BUDGET_MS = 50000; // stay comfortably under typical intermediary timeouts
 
   const deadline = Date.now() + TIME_BUDGET_MS;
+  let isClosed = false;
+  req.on('close', () => { isClosed = true; });
 
   try {
     const chapter = await db.getChapter(chapterId);
@@ -612,6 +672,8 @@ app.post('/api/chapters/:chapterId/prepare', authMiddleware, async (req, res) =>
     let generatedCount = 0;
 
     for (const section of sections) {
+      if (isClosed) break;
+
       const localPath = path.join(audioDir, `${section.id}.mp3`);
 
       if (readCachedSection(localPath, section.id)) {
@@ -625,6 +687,8 @@ app.post('/api/chapters/:chapterId/prepare', authMiddleware, async (req, res) =>
       if (audioBuffer) generatedCount++;
     }
 
+    if (isClosed) return;
+
     res.json({
       totalSections: sections.length,
       generatedSections: generatedCount,
@@ -632,7 +696,7 @@ app.post('/api/chapters/:chapterId/prepare', authMiddleware, async (req, res) =>
     });
   } catch (error) {
     debugLog(`Prepare error for ${chapterId}: ${error.message}`);
-    res.status(500).json({ error: error.message });
+    if (!isClosed) res.status(500).json({ error: error.message });
   }
 });
 
