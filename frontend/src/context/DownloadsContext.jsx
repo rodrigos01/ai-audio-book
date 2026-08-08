@@ -123,8 +123,8 @@ export const DownloadsProvider = ({ children }) => {
       });
     } catch (err) {
       if (err.name !== 'AbortError') {
-        console.error('Chapter download failed:', err);
-        setStatus(chapterId, { status: 'error' });
+        console.error(`Chapter download failed for ${chapterId}:`, err);
+        setStatus(chapterId, { status: 'error', errorMessage: err.message });
       } else {
         setStatus(chapterId, { status: 'none' });
       }
