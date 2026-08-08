@@ -119,6 +119,14 @@ export const api = {
     if (!res.ok) throw new Error('Failed to fetch voices');
     return res.json();
   },
+  prepareChapterDownload: async (chapterId, token, signal) => {
+    const res = await fetch(`${API_BASE}/chapters/${chapterId}/prepare`, fetchOptions({
+      method: 'POST',
+      signal
+    }, token));
+    if (!res.ok) throw new Error('Failed to prepare chapter download');
+    return res.json();
+  },
   getStreamUrl: (chapterId, offset = 0, token = null) => {
     let url = `${API_BASE}/chapters/${chapterId}/stream?offset=${offset}`;
     if (token) url += `&token=${encodeURIComponent(token)}`;
