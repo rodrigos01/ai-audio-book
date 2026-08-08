@@ -519,7 +519,9 @@ export default function TitleDetail() {
                               </md-icon-button>
                             </>
                           )}
-                          <md-icon style={{ color: 'var(--md-sys-color-primary)', marginRight: '0.5rem' }}><span className="material-symbols-outlined">play_circle</span></md-icon>
+                          <md-icon-button onClick={() => navigate(`/player/${chapter.id}`)} title="Play chapter">
+                            <md-icon style={{ color: 'var(--md-sys-color-primary)' }}><span className="material-symbols-outlined">play_circle</span></md-icon>
+                          </md-icon-button>
                         </div>
                       </md-list-item>
                     )}

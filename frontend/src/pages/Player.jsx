@@ -32,8 +32,16 @@ export default function Player() {
   const [offlineUrl, setOfflineUrl] = useState(null);
 
   const currentSection = chapter?.sections?.[currentSectionIndex];
-  const totalDuration = chapter?.estimated_duration_seconds || duration;
-  const displayCurrentTime = isScrubbing ? scrubTime : (currentSection?.estimated_start_time || 0) + currentTime;
+  const sectionOffset = isOfflinePlayback || currentSectionIndex === 0 ? 0 : (currentSection?.estimated_start_time || 0);
+  const hasFiniteDuration = !isNaN(duration) && isFinite(duration) && duration > 0;
+  const totalDuration = isOfflinePlayback && hasFiniteDuration
+    ? duration
+    : (hasFiniteDuration && currentSectionIndex === 0 && duration > (chapter?.estimated_duration_seconds || 0))
+      ? duration
+      : (chapter?.estimated_duration_seconds || duration || 0);
+  const displayCurrentTime = isScrubbing ? scrubTime : sectionOffset + currentTime;
+  const backTarget = chapter?.title_id ? `/title/${chapter.title_id}` : '/';
+  const backLabel = chapter?.title_name ? `Back to ${chapter.title_name}` : (chapter?.title_id ? 'Back to Title' : 'Back to Library');
 
   const handleSeekTo = (targetTime) => {
     if (isOfflinePlayback) {
@@ -120,7 +128,8 @@ export default function Player() {
 
         let est = 0;
         sectionsWithTime = sections.map((s) => {
-          const e = (s.content?.length || 0) / 8.1 + 0.5;
+          const spokenText = (s.content || '').replace(/<[^>]*>/g, '').trim();
+          const e = spokenText.length > 0 ? spokenText.length / 14.5 + 0.5 : 0.5;
           const startTime = est;
           est += e;
           return { ...s, estimated_start_time: startTime, estimated_duration: e };
@@ -202,14 +211,9 @@ export default function Player() {
     const onWaiting = () => setIsBuffering(true);
     const onPlaying = () => setIsBuffering(false);
     const onEnded = () => {
-      if (chapter?.sections && currentSectionIndex < chapter.sections.length - 1) {
-        setCurrentSectionIndex(prev => prev + 1);
-        setCurrentTime(0);
-      } else {
-        setIsPlaying(false);
-      }
+      setIsPlaying(false);
     };
-    const onError = (e) => {
+    const onError = () => {
       console.error('Audio element error:', audio.error);
       setIsBuffering(false);
     };
@@ -393,9 +397,9 @@ export default function Player() {
   if (error) {
     return (
       <div className="flex-col gap-8 mt-4 max-w-2xl mx-auto items-center">
-        <Link to="/" style={{ alignSelf: 'flex-start', display: 'inline-flex', alignItems: 'center', gap: '0.5rem', color: 'var(--md-sys-color-primary)', textDecoration: 'none' }}>
+        <Link to={backTarget} style={{ alignSelf: 'flex-start', display: 'inline-flex', alignItems: 'center', gap: '0.5rem', color: 'var(--md-sys-color-primary)', textDecoration: 'none' }}>
             <md-icon><span className="material-symbols-outlined">arrow_back</span></md-icon>
-            <span style={{ fontWeight: 500 }}>Back to Library</span>
+            <span style={{ fontWeight: 500 }}>{backLabel}</span>
         </Link>
         <div style={{ 
           width: '100%',
@@ -420,9 +424,9 @@ export default function Player() {
 
   return (
     <div className="flex-col gap-8 mt-4 max-w-2xl mx-auto pb-10">
-      <Link to="/" style={{ display: 'inline-flex', alignItems: 'center', gap: '0.5rem', color: 'var(--md-sys-color-primary)', textDecoration: 'none' }}>
+      <Link to={backTarget} style={{ display: 'inline-flex', alignItems: 'center', gap: '0.5rem', color: 'var(--md-sys-color-primary)', textDecoration: 'none' }}>
         <md-icon><span className="material-symbols-outlined">arrow_back</span></md-icon>
-        <span style={{ fontWeight: 500 }}>Back to Library</span>
+        <span style={{ fontWeight: 500 }}>{backLabel}</span>
       </Link>
 
       <div className="surface-container animate-fade-in" style={{ 
