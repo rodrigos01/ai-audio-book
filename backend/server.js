@@ -689,52 +689,14 @@ function getGcpVoiceName(voiceId) {
 
 function toGeminiVoiceId(voiceId) {
   if (!voiceId) return 'Aoede';
-  const supportedGeminiVoices = ['Aoede', 'Puck', 'Kore', 'Charon', 'Fenrir', 'Leda'];
-  if (supportedGeminiVoices.includes(voiceId)) return voiceId;
-
-  const fallbackMap = {
-    'Orpheus': 'Charon',
-    'Callisto': 'Leda',
-    'Achernar': 'Leda',
-    'Autonoe': 'Kore',
-    'Callirrhoe': 'Aoede',
-    'Despina': 'Leda',
-    'Erinome': 'Kore',
-    'Gacrux': 'Aoede',
-    'Laomedeia': 'Leda',
-    'Pulcherrima': 'Leda',
-    'Sulafat': 'Leda',
-    'Vindemiatrix': 'Kore',
-    'Zephyr': 'Kore',
-    'Orus': 'Charon',
-    'Achird': 'Puck',
-    'Algenib': 'Fenrir',
-    'Algieba': 'Charon',
-    'Alnilam': 'Fenrir',
-    'Enceladus': 'Charon',
-    'Iapetus': 'Charon',
-    'Rasalgethi': 'Charon',
-    'Sadachbia': 'Puck',
-    'Sadaltager': 'Charon',
-    'Schedar': 'Charon',
-    'Umbriel': 'Charon'
-  };
-
-  for (const [key, val] of Object.entries(fallbackMap)) {
-    if (voiceId.includes(key)) return val;
-  }
-
-  for (const gv of supportedGeminiVoices) {
-    if (voiceId.endsWith(gv) || voiceId.toLowerCase().includes(gv.toLowerCase())) {
-      return gv;
-    }
-  }
-
-  return 'Aoede';
+  const parts = voiceId.split('-');
+  const shortName = parts[parts.length - 1];
+  if (shortName === 'Orpheus') return 'Charon';
+  if (shortName === 'Callisto') return 'Leda';
+  return shortName || 'Aoede';
 }
 
 function extractSpeakerConfigsFromText(text, castingMap, narratorVoice) {
-  const supportedGeminiVoices = ['Aoede', 'Puck', 'Kore', 'Charon', 'Fenrir', 'Leda'];
   const speakerConfigs = [];
   const addedAliases = new Set();
   const usedVoiceIds = new Set();
@@ -756,12 +718,6 @@ function extractSpeakerConfigsFromText(text, castingMap, narratorVoice) {
           } else {
             voiceId = toGeminiVoiceId(alias);
           }
-        }
-
-        // Ensure each alias gets a distinct speakerId from supported list
-        if (usedVoiceIds.has(voiceId)) {
-          const unused = supportedGeminiVoices.find(v => !usedVoiceIds.has(v));
-          if (unused) voiceId = unused;
         }
 
         speakerConfigs.push({ speakerAlias: alias, speakerId: voiceId });
