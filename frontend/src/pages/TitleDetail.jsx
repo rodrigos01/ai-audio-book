@@ -4,7 +4,6 @@ import { api } from '../lib/api';
 import { openGooglePicker } from '../lib/googlePicker';
 import { useAuth } from '../context/AuthContext';
 import { useDownloads, getDownloadProgressFraction } from '../context/DownloadsContext';
-import ProgressRing from '../components/ProgressRing';
 import { db } from '../lib/firebase';
 import { doc, collection, query, where, onSnapshot, orderBy, getDoc } from 'firebase/firestore';
 
@@ -229,9 +228,7 @@ export default function TitleDetail() {
         ? (dl.total ? `Preparing audio… ${dl.progress}/${dl.total}` : 'Preparing audio…')
         : 'Downloading…';
       return (
-        <span style={{ display: 'inline-flex', padding: '8px' }}>
-          <ProgressRing fraction={fraction} size={20} title={title} />
-        </span>
+        <md-circular-progress value={fraction} title={title} style={{ '--md-circular-progress-size': '20px' }}></md-circular-progress>
       );
     }
 

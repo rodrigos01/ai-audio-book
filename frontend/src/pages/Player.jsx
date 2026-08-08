@@ -3,7 +3,6 @@ import { useParams, Link } from 'react-router-dom';
 import { api } from '../lib/api';
 import { useAuth } from '../context/AuthContext';
 import { useDownloads, getDownloadProgressFraction } from '../context/DownloadsContext';
-import ProgressRing from '../components/ProgressRing';
 import * as offlineStorage from '../lib/offlineStorage';
 import { db } from '../lib/firebase';
 import { doc, collection, query, where, getDoc, getDocs, orderBy } from 'firebase/firestore';
@@ -331,11 +330,7 @@ export default function Player() {
       const title = status === 'preparing'
         ? (dl.total ? `Preparing audio… ${dl.progress}/${dl.total}` : 'Preparing audio…')
         : 'Downloading…';
-      return (
-        <span style={{ display: 'inline-flex', padding: '8px' }}>
-          <ProgressRing fraction={fraction} size={24} title={title} />
-        </span>
-      );
+      return <md-circular-progress value={fraction} title={title} style={{ '--md-circular-progress-size': '24px' }}></md-circular-progress>;
     }
 
     if (status === 'downloaded' && !isStale) {
