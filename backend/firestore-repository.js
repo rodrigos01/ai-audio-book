@@ -53,6 +53,13 @@ class FirestoreRepository extends Repository {
     return { id: doc.id, ...data };
   }
 
+  async getTitleById(id) {
+    if (!id) return null;
+    const doc = await this.db.collection('titles').doc(id).get();
+    if (!doc.exists) return null;
+    return { id: doc.id, ...doc.data() };
+  }
+
   async updateTitle(id, data) {
     await this.db.collection('titles').doc(id).update(data);
   }

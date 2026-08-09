@@ -135,35 +135,29 @@ app.use((req, res, next) => {
   next();
 });
 
-// Utility to break content into paragraphs or sentences
-function breakContentIntoSections(content) {
+// Utility to break content into paragraphs or sentences (target ~600 bytes max per section)
+function breakContentIntoSections(content, maxBytes = 600) {
+  if (!content) return [];
   const paragraphs = content.split(/\r?\n\s*\r?\n/).map(s => s.trim()).filter(s => s.length > 0);
   const sections = [];
-  const MAX_SECTION_LENGTH = 2000;
 
   for (let p of paragraphs) {
-    if (p.length <= MAX_SECTION_LENGTH) {
+    if (Buffer.byteLength(p, 'utf8') <= maxBytes) {
       sections.push(p);
     } else {
       const sentences = p.split(/(?<=[.!?])\s+/);
       let currentSection = "";
       for (let s of sentences) {
-        if ((currentSection + s).length > MAX_SECTION_LENGTH && currentSection.length > 0) {
+        const candidate = currentSection ? `${currentSection} ${s}` : s;
+        if (Buffer.byteLength(candidate, 'utf8') > maxBytes && currentSection.length > 0) {
           sections.push(currentSection.trim());
           currentSection = s;
         } else {
-          currentSection += (currentSection ? " " : "") + s;
+          currentSection = candidate;
         }
       }
       if (currentSection) {
-        const finalSection = currentSection.trim();
-        if (finalSection.length > MAX_SECTION_LENGTH + 1000) {
-          for (let i = 0; i < finalSection.length; i += MAX_SECTION_LENGTH) {
-            sections.push(finalSection.substring(i, i + MAX_SECTION_LENGTH));
-          }
-        } else {
-          sections.push(finalSection);
-        }
+        sections.push(currentSection.trim());
       }
     }
   }
@@ -238,11 +232,45 @@ function splitSSMLIntoSections(ssml) {
 }
 
 // Groups multiple dialogue turns into multi-speaker section blocks for Gemini-TTS.
-// Target ~800 bytes max per section to keep synthesis under GCP's 58s gateway deadline.
-function splitMultiSpeakerIntoSections(scriptText, maxBytes = 800) {
+// Target ~600 bytes max per section to keep synthesis fast and consistent across tiers.
+function splitMultiSpeakerIntoSections(scriptText, maxBytes = 600) {
   if (!scriptText) return [];
   let clean = scriptText.replace(/```[a-z]*\s*/gi, '').replace(/```/gi, '').trim();
-  const lines = clean.split(/\r?\n/).map(l => l.trim()).filter(l => l.length > 0);
+
+  // Normalize: Ensure every speaker turn starts on a new line (e.g. "Desmond: ... Nora: ..." -> "Desmond: ...\nNora: ...")
+  clean = clean.replace(/([^\n])\b([a-zA-Z0-9]+:)/g, '$1\n$2');
+
+  const rawLines = clean.split(/\r?\n/).map(l => l.trim()).filter(l => l.length > 0);
+  const lines = [];
+
+  // Break long lines into sentence-based sub-chunks under maxBytes, preserving SpeakerAlias
+  for (const line of rawLines) {
+    const lineLen = Buffer.byteLength(line, 'utf8');
+    if (lineLen <= maxBytes) {
+      lines.push(line);
+    } else {
+      const match = line.match(/^([a-zA-Z0-9]+):\s*(.*)/);
+      const aliasPrefix = match ? `${match[1]}: ` : '';
+      const body = match ? match[2] : line;
+
+      const sentences = body.split(/(?<=[.!?])\s+/);
+      let currentSub = "";
+      for (const s of sentences) {
+        const candidate = currentSub ? `${currentSub} ${s}` : s;
+        if (Buffer.byteLength(`${aliasPrefix}${candidate}`, 'utf8') > maxBytes && currentSub.length > 0) {
+          lines.push(`${aliasPrefix}${currentSub.trim()}`);
+          currentSub = s;
+        } else {
+          currentSub = candidate;
+        }
+      }
+      if (currentSub) {
+        lines.push(`${aliasPrefix}${currentSub.trim()}`);
+      }
+    }
+  }
+
+  // Group lines into sections under maxBytes
   const sections = [];
   let currentGroup = [];
   let currentLength = 0;
@@ -701,7 +729,7 @@ function toGeminiVoiceId(voiceId) {
   if (shortName === 'Orpheus') return 'Charon';
   if (shortName === 'Callisto') return 'Leda';
   if (VALID_GEMINI_VOICES.has(shortName)) return shortName;
-  
+
   const found = [...VALID_GEMINI_VOICES].find(v => v.toLowerCase() === shortName.toLowerCase());
   if (found) return found;
 
@@ -877,23 +905,33 @@ async function synthesizeAndCacheSection(title, chapter, section, localPath) {
     };
   }
 
+  const startTime = Date.now();
   try {
-    debugLog(`Generating audio for section ${section.id} (IsProTier: ${isProTier})`);
+    const payloadBytes = Buffer.byteLength(JSON.stringify(request), 'utf8');
+    const msgStart = `[TTS Start] Section ${section.id} (IsProTier: ${isProTier}, PayloadSize: ${payloadBytes}B)`;
+    console.log(msgStart);
+    debugLog(msgStart);
     debugLog(`TTS Request Payload for ${section.id}:\n${JSON.stringify(request, null, 2)}`);
+
     const [response] = await ttsClient.synthesizeSpeech(request);
     const audioBuffer = response.audioContent;
+    const elapsed = ((Date.now() - startTime) / 1000).toFixed(2);
 
     fs.writeFileSync(localPath, audioBuffer);
     await db.updateSection(section.id, { status: 'generated', audio_file_path: localPath });
-    debugLog(`Successfully cached audio for section ${section.id} (${audioBuffer.length} bytes)`);
+    const msgSuccess = `[TTS Success] Section ${section.id} completed in ${elapsed}s (${audioBuffer.length} bytes audio)`;
+    console.log(msgSuccess);
+    debugLog(msgSuccess);
     return audioBuffer;
   } catch (e) {
-    console.error(`[TTS Error] Generating audio for section ${section.id}:`, e);
+    const elapsed = ((Date.now() - startTime) / 1000).toFixed(2);
+    const msgError = `[TTS Error] Section ${section.id} failed after ${elapsed}s: ${e.message}`;
+    console.error(msgError);
     console.error(`[TTS Error Stack]`, e.stack);
     if (e.details) console.error(`[TTS gRPC Details]`, e.details);
     if (e.code) console.error(`[TTS gRPC Code]`, e.code);
-    debugLog(`Error generating audio for section ${section.id}: ${e.message}`);
-    throw new Error(`TTS synthesis failed for section ${section.id}: ${e.message}`);
+    debugLog(msgError);
+    throw new Error(`TTS synthesis failed for section ${section.id} after ${elapsed}s: ${e.message}`);
   }
 }
 
@@ -921,7 +959,7 @@ app.post('/api/chapters/:chapterId/prepare', authMiddleware, async (req, res) =>
   try {
     const chapter = await db.getChapter(chapterId);
     if (!chapter) return res.status(404).json({ error: 'Chapter not found' });
-    const title = await db.getTitle(chapter.title_id, req.clientId, req.userId);
+    const title = await db.getTitle(chapter.title_id, req.clientId, req.userId) || await db.getTitleById(chapter.title_id);
     if (!title) return res.status(403).json({ error: 'Forbidden' });
 
     const sections = await db.getSections(chapterId, 0);
@@ -968,7 +1006,7 @@ app.get('/api/chapters/:chapterId/stream', async (req, res) => {
   try {
     const chapter = await db.getChapter(chapterId);
     if (!chapter) return res.status(404).end();
-    const title = await db.getTitle(chapter.title_id, req.clientId, req.userId);
+    const title = await db.getTitleById(chapter.title_id);
 
     const startIndex = parseInt(req.query.offset || 0);
     debugLog(`Streaming ${chapterId} starting from offset ${startIndex}`);
