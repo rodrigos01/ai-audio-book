@@ -139,16 +139,5 @@ export const api = {
     }, token);
     if (!res.ok) throw new Error('Failed to claim books');
     return res.json();
-  },
-  fetchGoogleDoc: async (documentId, googleAccessToken, firebaseToken) => {
-    const res = await request(`${API_BASE}/google-docs/fetch`, {
-      method: 'POST',
-      body: JSON.stringify({ documentId, googleAccessToken })
-    }, firebaseToken);
-    if (!res.ok) {
-      const errorData = await res.json();
-      throw new Error(errorData.error || 'Failed to fetch Google Document');
-    }
-    return res.json();
   }
 };

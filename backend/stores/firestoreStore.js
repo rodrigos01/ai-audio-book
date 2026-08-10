@@ -1,9 +1,7 @@
-const admin = require('./firebase-config');
-const Repository = require('./repository');
+const admin = require('../firebase-config');
 
-class FirestoreRepository extends Repository {
+class FirestoreStore {
   constructor() {
-    super();
     this.db = admin.firestore();
   }
 
@@ -34,7 +32,6 @@ class FirestoreRepository extends Repository {
       owner_id: ownerId,
       created_at: admin.firestore.FieldValue.serverTimestamp()
     };
-    // Cleanup old fields if present
     delete data.user_id;
     delete data.client_id;
 
@@ -65,7 +62,6 @@ class FirestoreRepository extends Repository {
   }
 
   async deleteTitle(id) {
-    // Delete chapters and sections first (simplified for MVP: just delete title)
     await this.db.collection('titles').doc(id).delete();
   }
 
@@ -90,7 +86,6 @@ class FirestoreRepository extends Repository {
     if (!doc.exists) return null;
     const chapter = { id: doc.id, ...doc.data() };
     
-    // Check if client/user owns the title
     const titleDoc = await this.db.collection('titles').doc(chapter.title_id).get();
     if (!titleDoc.exists) return null;
     
@@ -147,7 +142,7 @@ class FirestoreRepository extends Repository {
     await this.db.collection('chapter_sections').doc(id).update(data);
   }
 
-  async linkAnonymousBooks(clientId, userId) {
+  async linkAnonymousTitles(clientId, userId) {
     const anonOwnerId = `client:${clientId}`;
     const userOwnerId = `user:${userId}`;
     
@@ -165,4 +160,4 @@ class FirestoreRepository extends Repository {
   }
 }
 
-module.exports = FirestoreRepository;
+module.exports = new FirestoreStore();
