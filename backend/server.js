@@ -81,11 +81,6 @@ app.use('/api/chapters', chapterRoutes);
 app.use('/api/voices', voiceRoutes);
 app.use('/api/auth', authRoutes);
 
-// Serve frontend samples fallback
-if (fs.existsSync(audioFileStore.samplesDir)) {
-  app.use('/samples', express.static(audioFileStore.samplesDir));
-}
-
 // SPA fallback for non-API GET requests
 app.use((req, res) => {
   if (req.path.startsWith('/api')) return res.status(404).json({ error: 'API not found' });

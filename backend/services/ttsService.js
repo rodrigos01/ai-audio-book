@@ -6,6 +6,8 @@ const audioFileStore = require('../stores/audioFileStore');
 const firestoreStore = require('../stores/firestoreStore');
 const admin = require('../firebase-config');
 
+const SILENT_MP3 = Buffer.from('//uQxAAAAAAAAAAAAAAAAAAAAAAAWGluZwAAAA8AAAACAAACcQCAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICA/wAAAP8AAAD/AAAA/wAAAP8AAAD/AAAA/wAAAP8AAAD/AAAA/wAAAP8AAAD/AAAA/wAAAP8AAAD/AAAA/wAAAP8AAAAA', 'base64');
+
 let ttsClient;
 try {
   const keyPath = process.env.GOOGLE_APPLICATION_CREDENTIALS || path.join(__dirname, '../ai-audio-book-36e0611138d4.json');
@@ -58,6 +60,14 @@ function getGcpVoiceName(voiceId) {
     'Callisto': 'en-US-News-K'
   };
   return geminiMap[voiceId] || 'en-US-Journey-F';
+}
+
+function getLanguageCode(voiceName) {
+  if (voiceName && voiceName.includes('-')) {
+    const parts = voiceName.split('-');
+    if (parts.length >= 2) return `${parts[0]}-${parts[1]}`;
+  }
+  return 'en-US';
 }
 
 const VALID_GEMINI_VOICES = new Set([
@@ -165,108 +175,86 @@ async function deleteChapterSections(chapterId) {
   }
 }
 
+async function handleEmptySectionFallback(sectionId) {
+  debugLog(`Section ${sectionId} contains no speakable text. Caching silent fallback audio.`);
+  audioFileStore.saveSectionAudio(sectionId, SILENT_MP3);
+  await firestoreStore.updateSection(sectionId, {
+    status: 'generated',
+    audio_file_path: audioFileStore.getSectionAudioPath(sectionId)
+  });
+  return SILENT_MP3;
+}
+
+function buildSSMLRequest(ssmlContent, voiceId) {
+  const voiceName = getGcpVoiceName(voiceId);
+  return {
+    input: { ssml: ssmlContent },
+    voice: { languageCode: getLanguageCode(voiceName), name: voiceName },
+    audioConfig: { audioEncoding: 'MP3' },
+  };
+}
+
+function buildProRequest(textContent, title, chapter) {
+  const castingMap = (title && title.casting_map) || {};
+  const narratorVoice = (title && title.narrator_voice) || chapter.voice_id || 'Aoede';
+  const speakerConfigs = extractSpeakerConfigsFromText(textContent, castingMap, narratorVoice);
+  const performancePrompt = (chapter && chapter.performance_prompt)
+    || "Synthesize the text as a multi-speaker dramatic audiobook performance with distinct character voices and natural emotional expressions.";
+
+  if (speakerConfigs.length >= 2) {
+    return {
+      input: { prompt: performancePrompt, text: textContent },
+      voice: {
+        languageCode: 'en-US',
+        modelName: 'gemini-3.1-flash-tts-preview',
+        multiSpeakerVoiceConfig: { speakerVoiceConfigs: speakerConfigs }
+      },
+      audioConfig: { audioEncoding: 'MP3' }
+    };
+  }
+
+  const singleVoice = speakerConfigs.length > 0 ? speakerConfigs[0].speakerId : toGeminiVoiceId(narratorVoice);
+  const cleanSingleSpeakerText = textContent.replace(/^([a-zA-Z0-9]+):\s*/gm, '').trim();
+  return {
+    input: { prompt: performancePrompt, text: cleanSingleSpeakerText },
+    voice: { languageCode: 'en-US', modelName: 'gemini-3.1-flash-tts-preview', name: singleVoice },
+    audioConfig: { audioEncoding: 'MP3' }
+  };
+}
+
+function buildBasicRequest(textContent, voiceId) {
+  const voiceName = getGcpVoiceName(voiceId);
+  return {
+    input: { text: textContent },
+    voice: { languageCode: getLanguageCode(voiceName), name: voiceName },
+    audioConfig: { audioEncoding: 'MP3' },
+  };
+}
+
 async function synthesizeAndCacheSection(title, chapter, section) {
   const isProTier = title && title.tts_tier === 'pro';
   const isSSML = !isProTier && chapter.is_ssml && (section.content || '').trim().startsWith('<speak>');
   let request;
 
-  const silentMp3 = Buffer.from('//uQxAAAAAAAAAAAAAAAAAAAAAAAWGluZwAAAA8AAAACAAACcQCAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICA/wAAAP8AAAD/AAAA/wAAAP8AAAD/AAAA/wAAAP8AAAD/AAAA/wAAAP8AAAD/AAAA/wAAAP8AAAD/AAAA/wAAAP8AAAAA', 'base64');
-
   if (isSSML) {
     const ssmlContent = sanitizeSSML(section.content, true);
     const speakableText = (ssmlContent || '').replace(/<[^>]*>/g, '').trim();
     if (speakableText.length === 0) {
-      debugLog(`Section ${section.id} contains no speakable text. Caching silent fallback audio.`);
-      audioFileStore.saveSectionAudio(section.id, silentMp3);
-      await firestoreStore.updateSection(section.id, { status: 'generated', audio_file_path: audioFileStore.getSectionAudioPath(section.id) });
-      return silentMp3;
+      return handleEmptySectionFallback(section.id);
     }
-
-    const rawVoice = chapter.voice_id || 'en-US-Chirp3-HD-Aoede';
-    const voiceName = getGcpVoiceName(rawVoice);
-    let languageCode = 'en-US';
-    if (voiceName.includes('-')) {
-      const parts = voiceName.split('-');
-      if (parts.length >= 2) languageCode = `${parts[0]}-${parts[1]}`;
-    }
-
-    request = {
-      input: { ssml: ssmlContent },
-      voice: { languageCode, name: voiceName },
-      audioConfig: { audioEncoding: 'MP3' },
-    };
+    request = buildSSMLRequest(ssmlContent, chapter.voice_id || 'en-US-Chirp3-HD-Aoede');
   } else if (isProTier) {
     const textContent = (section.content || '').replace(/<[^>]*>/g, '').trim();
     if (textContent.length === 0) {
-      debugLog(`Section ${section.id} contains no text. Caching silent fallback audio.`);
-      audioFileStore.saveSectionAudio(section.id, silentMp3);
-      await firestoreStore.updateSection(section.id, { status: 'generated', audio_file_path: audioFileStore.getSectionAudioPath(section.id) });
-      return silentMp3;
+      return handleEmptySectionFallback(section.id);
     }
-
-    const castingMap = (title && title.casting_map) || {};
-    const narratorVoice = (title && title.narrator_voice) || chapter.voice_id || 'Aoede';
-    const speakerConfigs = extractSpeakerConfigsFromText(textContent, castingMap, narratorVoice);
-    const performancePrompt = (chapter && chapter.performance_prompt)
-      || "Synthesize the text as a multi-speaker dramatic audiobook performance with distinct character voices and natural emotional expressions.";
-
-    if (speakerConfigs.length >= 2) {
-      request = {
-        input: {
-          prompt: performancePrompt,
-          text: textContent
-        },
-        voice: {
-          languageCode: 'en-US',
-          modelName: 'gemini-3.1-flash-tts-preview',
-          multiSpeakerVoiceConfig: {
-            speakerVoiceConfigs: speakerConfigs
-          }
-        },
-        audioConfig: {
-          audioEncoding: 'MP3'
-        }
-      };
-    } else {
-      const singleVoice = speakerConfigs.length > 0 ? speakerConfigs[0].speakerId : toGeminiVoiceId(narratorVoice);
-      const cleanSingleSpeakerText = textContent.replace(/^([a-zA-Z0-9]+):\s*/gm, '').trim();
-      request = {
-        input: {
-          prompt: performancePrompt,
-          text: cleanSingleSpeakerText
-        },
-        voice: {
-          languageCode: 'en-US',
-          modelName: 'gemini-3.1-flash-tts-preview',
-          name: singleVoice
-        },
-        audioConfig: {
-          audioEncoding: 'MP3'
-        }
-      };
-    }
+    request = buildProRequest(textContent, title, chapter);
   } else {
     const textContent = (section.content || '').replace(/<[^>]*>/g, '').trim();
     if (textContent.length === 0) {
-      debugLog(`Section ${section.id} contains no text. Caching silent fallback audio.`);
-      audioFileStore.saveSectionAudio(section.id, silentMp3);
-      await firestoreStore.updateSection(section.id, { status: 'generated', audio_file_path: audioFileStore.getSectionAudioPath(section.id) });
-      return silentMp3;
+      return handleEmptySectionFallback(section.id);
     }
-
-    const rawVoice = chapter.voice_id || 'Aoede';
-    const voiceName = getGcpVoiceName(rawVoice);
-    let languageCode = 'en-US';
-    if (voiceName.includes('-')) {
-      const parts = voiceName.split('-');
-      if (parts.length >= 2) languageCode = `${parts[0]}-${parts[1]}`;
-    }
-
-    request = {
-      input: { text: textContent },
-      voice: { languageCode, name: voiceName },
-      audioConfig: { audioEncoding: 'MP3' },
-    };
+    request = buildBasicRequest(textContent, chapter.voice_id || 'Aoede');
   }
 
   const startTime = Date.now();

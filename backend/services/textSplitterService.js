@@ -1,28 +1,35 @@
 const { v4: uuidv4 } = require('uuid');
 
+function splitTextBySentences(bodyText, prefix = '', maxBytes = 600) {
+  const sentences = bodyText.split(/(?<=[.!?])\s+/);
+  const chunks = [];
+  let currentSub = '';
+
+  for (const s of sentences) {
+    const candidate = currentSub ? `${currentSub} ${s}` : s;
+    if (Buffer.byteLength(`${prefix}${candidate}`, 'utf8') > maxBytes && currentSub.length > 0) {
+      chunks.push(`${prefix}${currentSub.trim()}`);
+      currentSub = s;
+    } else {
+      currentSub = candidate;
+    }
+  }
+  if (currentSub) {
+    chunks.push(`${prefix}${currentSub.trim()}`);
+  }
+  return chunks;
+}
+
 function breakContentIntoSections(content, maxBytes = 600) {
   if (!content) return [];
   const paragraphs = content.split(/\r?\n\s*\r?\n/).map(s => s.trim()).filter(s => s.length > 0);
   const sections = [];
 
-  for (let p of paragraphs) {
+  for (const p of paragraphs) {
     if (Buffer.byteLength(p, 'utf8') <= maxBytes) {
       sections.push(p);
     } else {
-      const sentences = p.split(/(?<=[.!?])\s+/);
-      let currentSection = "";
-      for (let s of sentences) {
-        const candidate = currentSection ? `${currentSection} ${s}` : s;
-        if (Buffer.byteLength(candidate, 'utf8') > maxBytes && currentSection.length > 0) {
-          sections.push(currentSection.trim());
-          currentSection = s;
-        } else {
-          currentSection = candidate;
-        }
-      }
-      if (currentSection) {
-        sections.push(currentSection.trim());
-      }
+      sections.push(...splitTextBySentences(p, '', maxBytes));
     }
   }
   return sections;
@@ -58,7 +65,6 @@ function splitSSMLIntoSections(ssml) {
 function splitMultiSpeakerIntoSections(scriptText, maxBytes = 600) {
   if (!scriptText) return [];
   let clean = scriptText.replace(/```[a-z]*\s*/gi, '').replace(/```/gi, '').trim();
-
   clean = clean.replace(/([^\n])\b([a-zA-Z0-9]+:)/g, '$1\n$2');
 
   const rawLines = clean.split(/\r?\n/).map(l => l.trim()).filter(l => l.length > 0);
@@ -72,21 +78,7 @@ function splitMultiSpeakerIntoSections(scriptText, maxBytes = 600) {
       const match = line.match(/^([a-zA-Z0-9]+):\s*(.*)/);
       const aliasPrefix = match ? `${match[1]}: ` : '';
       const body = match ? match[2] : line;
-
-      const sentences = body.split(/(?<=[.!?])\s+/);
-      let currentSub = "";
-      for (const s of sentences) {
-        const candidate = currentSub ? `${currentSub} ${s}` : s;
-        if (Buffer.byteLength(`${aliasPrefix}${candidate}`, 'utf8') > maxBytes && currentSub.length > 0) {
-          lines.push(`${aliasPrefix}${currentSub.trim()}`);
-          currentSub = s;
-        } else {
-          currentSub = candidate;
-        }
-      }
-      if (currentSub) {
-        lines.push(`${aliasPrefix}${currentSub.trim()}`);
-      }
+      lines.push(...splitTextBySentences(body, aliasPrefix, maxBytes));
     }
   }
 

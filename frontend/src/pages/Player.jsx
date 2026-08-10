@@ -7,6 +7,46 @@ import * as offlineStorage from '../lib/offlineStorage';
 import { db } from '../lib/firebase';
 import { doc, collection, query, where, getDoc, getDocs, orderBy } from 'firebase/firestore';
 
+function useMediaSession(chapter, isPlaying, displayCurrentTime, totalDuration, audioRef, handleSeekTo) {
+  useEffect(() => {
+    if (!chapter || !('mediaSession' in navigator)) return;
+
+    navigator.mediaSession.metadata = new MediaMetadata({
+      title: chapter.name || `Chapter ${chapter.order_index}`,
+      artist: chapter.title_name || 'AI Audio Book',
+      album: 'AI Audio Book',
+      artwork: [
+        { src: 'https://placehold.co/96x96/7c4dff/ffffff?text=AI+Book', sizes: '96x96', type: 'image/png' },
+        { src: 'https://placehold.co/512x512/7c4dff/ffffff?text=AI+Audio+Book', sizes: '512x512', type: 'image/png' },
+      ]
+    });
+
+    navigator.mediaSession.setActionHandler('play', () => audioRef.current?.play());
+    navigator.mediaSession.setActionHandler('pause', () => audioRef.current?.pause());
+    navigator.mediaSession.setActionHandler('seekbackward', (details) => {
+      const skipTime = details.seekOffset || 10;
+      handleSeekTo(Math.max(displayCurrentTime - skipTime, 0));
+    });
+    navigator.mediaSession.setActionHandler('seekforward', (details) => {
+      const skipTime = details.seekOffset || 10;
+      handleSeekTo(Math.min(displayCurrentTime + skipTime, totalDuration));
+    });
+
+    return () => {
+      navigator.mediaSession.setActionHandler('play', null);
+      navigator.mediaSession.setActionHandler('pause', null);
+      navigator.mediaSession.setActionHandler('seekbackward', null);
+      navigator.mediaSession.setActionHandler('seekforward', null);
+    };
+  }, [chapter, displayCurrentTime, totalDuration, audioRef, handleSeekTo]);
+
+  useEffect(() => {
+    if ('mediaSession' in navigator) {
+      navigator.mediaSession.playbackState = isPlaying ? 'playing' : 'paused';
+    }
+  }, [isPlaying]);
+}
+
 export default function Player() {
   const { chapterId } = useParams();
   const audioRef = useRef(null);
@@ -270,47 +310,7 @@ export default function Player() {
   }, [displayCurrentTime, isScrubbing]);
 
   // Media Session API for background playback and lock screen controls
-  useEffect(() => {
-    if (!chapter || !('mediaSession' in navigator)) return;
-
-    navigator.mediaSession.metadata = new MediaMetadata({
-      title: chapter.name || `Chapter ${chapter.order_index}`,
-      artist: chapter.title_name || 'AI Audio Book',
-      album: 'AI Audio Book',
-      artwork: [
-        { src: 'https://placehold.co/96x96/7c4dff/ffffff?text=AI+Book', sizes: '96x96', type: 'image/png' },
-        { src: 'https://placehold.co/512x512/7c4dff/ffffff?text=AI+Audio+Book', sizes: '512x512', type: 'image/png' },
-      ]
-    });
-
-    navigator.mediaSession.setActionHandler('play', () => {
-      audioRef.current?.play();
-    });
-    navigator.mediaSession.setActionHandler('pause', () => {
-      audioRef.current?.pause();
-    });
-    navigator.mediaSession.setActionHandler('seekbackward', (details) => {
-      const skipTime = details.seekOffset || 10;
-      handleSeekTo(Math.max(displayCurrentTime - skipTime, 0));
-    });
-    navigator.mediaSession.setActionHandler('seekforward', (details) => {
-      const skipTime = details.seekOffset || 10;
-      handleSeekTo(Math.min(displayCurrentTime + skipTime, totalDuration));
-    });
-
-    return () => {
-      navigator.mediaSession.setActionHandler('play', null);
-      navigator.mediaSession.setActionHandler('pause', null);
-      navigator.mediaSession.setActionHandler('seekbackward', null);
-      navigator.mediaSession.setActionHandler('seekforward', null);
-    };
-  }, [chapter, currentTime, currentSectionIndex]);
-
-  useEffect(() => {
-    if ('mediaSession' in navigator) {
-      navigator.mediaSession.playbackState = isPlaying ? 'playing' : 'paused';
-    }
-  }, [isPlaying]);
+  useMediaSession(chapter, isPlaying, displayCurrentTime, totalDuration, audioRef, handleSeekTo);
 
   const togglePlay = () => {
     if (isPlaying) {
