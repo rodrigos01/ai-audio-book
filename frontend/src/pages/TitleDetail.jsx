@@ -176,17 +176,20 @@ export default function TitleDetail() {
     setError(null);
     try {
       const firebaseToken = await getToken();
-      let finalContent = newContent;
+      const voiceId = selectedVoice || voices[0]?.id;
 
       if (linkedDoc) {
         setSyncing(true);
-        const { content } = await api.fetchGoogleDoc(linkedDoc.id, googleAccessToken, firebaseToken);
-        finalContent = content;
-        setSyncing(false);
+        await api.createChapter(id, {
+          googleDocId: linkedDoc.id,
+          googleAccessToken,
+          voiceId,
+          name: chapterName
+        }, firebaseToken);
+      } else {
+        await api.createChapter(id, newContent, voiceId, chapterName, firebaseToken);
       }
 
-      const voiceId = selectedVoice || voices[0]?.id;
-      await api.createChapter(id, finalContent, voiceId, chapterName, firebaseToken);
       setChapterName('');
       setNewContent('');
       setLinkedDoc(null);
@@ -436,7 +439,12 @@ export default function TitleDetail() {
                     maxWidth: '100%'
                 }} className="no-scrollbar">
                     {Object.entries(castingMap).map(([character, voiceId]) => {
-                        const voice = voices.find(v => v.id === voiceId || v.id.endsWith(voiceId) || (voiceId && voiceId.endsWith(v.id)));
+                        const voice = voices.find(v => {
+                          if (!voiceId) return false;
+                          const vId = v.id.toLowerCase();
+                          const targetId = voiceId.toLowerCase();
+                          return vId === targetId || vId.endsWith(`-${targetId}`) || targetId.endsWith(`-${vId}`);
+                        });
                         const isChanging = changingCharacter === character;
                         return (
                             <div key={character} style={{ minWidth: '280px' }}>

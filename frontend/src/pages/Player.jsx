@@ -128,6 +128,10 @@ export default function Player() {
 
         let est = 0;
         sectionsWithTime = sections.map((s) => {
+          if (s.estimated_start_time != null && s.estimated_duration != null) {
+            est = s.estimated_start_time + s.estimated_duration;
+            return s;
+          }
           const spokenText = (s.content || '').replace(/<[^>]*>/g, '').trim();
           const e = spokenText.length > 0 ? spokenText.length / 14.5 + 0.5 : 0.5;
           const startTime = est;
@@ -184,7 +188,9 @@ export default function Player() {
 
   useEffect(() => {
     if (!authLoading) {
+      queueMicrotask(() => {
         loadChapter();
+      });
     }
   }, [loadChapter, authLoading]);
 

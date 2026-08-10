@@ -43,27 +43,12 @@ const request = async (url, options = {}, token = null) => {
 };
 
 export const api = {
-  getTitles: async (token) => {
-    const res = await request(`${API_BASE}/titles`, {}, token);
-    if (!res.ok) throw new Error('Failed to fetch titles');
-    return res.json();
-  },
   createTitle: async (name, aiCastingEnabled, ttsTier = 'basic', narratorVoice = null, token) => {
     const res = await request(`${API_BASE}/titles`, {
       method: 'POST',
       body: JSON.stringify({ name, ai_casting_enabled: aiCastingEnabled, tts_tier: ttsTier, narrator_voice: narratorVoice })
     }, token);
     if (!res.ok) throw new Error('Failed to create title');
-    return res.json();
-  },
-  castChapter: async (chapterId, token) => {
-    const res = await request(`${API_BASE}/chapters/${chapterId}/cast`, {
-      method: 'POST'
-    }, token);
-    if (!res.ok) {
-      const errorData = await res.json();
-      throw new Error(errorData.error || 'Failed to cast chapter');
-    }
     return res.json();
   },
   updateTitle: async (id, data, token) => {
@@ -81,22 +66,29 @@ export const api = {
     if (!res.ok) throw new Error('Failed to delete title');
     return res.json();
   },
-  getChapters: async (titleId, token) => {
-    const res = await request(`${API_BASE}/titles/${titleId}/chapters`, {}, token);
-    if (!res.ok) throw new Error('Failed to fetch chapters');
-    return res.json();
-  },
-  getChapter: async (id, token) => {
-    const res = await request(`${API_BASE}/chapters/${id}`, {}, token);
-    if (!res.ok) throw new Error('Failed to fetch chapter');
-    return res.json();
-  },
-  createChapter: async (titleId, content, voiceId, name, token) => {
+  createChapter: async (titleId, contentOrPayload, voiceId, name, token) => {
+    let body = {};
+    let authToken = token;
+    if (typeof contentOrPayload === 'object' && contentOrPayload !== null) {
+      body = {
+        content: contentOrPayload.content,
+        voice_id: contentOrPayload.voiceId,
+        name: contentOrPayload.name,
+        google_doc_id: contentOrPayload.googleDocId,
+        google_access_token: contentOrPayload.googleAccessToken
+      };
+      authToken = voiceId; // 3rd arg is token when 2nd arg is payload
+    } else {
+      body = { content: contentOrPayload, voice_id: voiceId, name };
+    }
     const res = await request(`${API_BASE}/titles/${titleId}/chapters`, {
       method: 'POST',
-      body: JSON.stringify({ content, voice_id: voiceId, name })
-    }, token);
-    if (!res.ok) throw new Error('Failed to create chapter');
+      body: JSON.stringify(body)
+    }, authToken);
+    if (!res.ok) {
+      const errData = await res.json().catch(() => ({}));
+      throw new Error(errData.error || 'Failed to create chapter');
+    }
     return res.json();
   },
   updateChapter: async (id, data, token) => {

@@ -294,6 +294,26 @@ function splitMultiSpeakerIntoSections(scriptText, maxBytes = 600) {
   return sections;
 }
 
+// Builds section document items with pre-calculated spoken duration and start time offsets
+function buildSectionItems(chapterId, sectionTexts) {
+  let est = 0;
+  return sectionTexts.map((text, index) => {
+    const spokenText = (text || '').replace(/<[^>]*>/g, '').trim();
+    const duration = spokenText.length > 0 ? spokenText.length / 14.5 + 0.5 : 0.5;
+    const startTime = est;
+    est += duration;
+    return {
+      id: uuidv4(),
+      chapter_id: chapterId,
+      section_index: index,
+      content: text,
+      status: 'pending',
+      estimated_start_time: startTime,
+      estimated_duration: duration
+    };
+  });
+}
+
 // Google Docs Parser
 function extractTextFromGoogleDoc(doc) {
   let fullText = '';
@@ -354,68 +374,6 @@ app.post('/api/google-docs/fetch', async (req, res) => {
 
 const aiCasting = require('./ai-casting');
 
-app.post('/api/chapters/:chapterId/cast', authMiddleware, async (req, res) => {
-  const { chapterId } = req.params;
-  try {
-    const chapter = await db.getChapter(chapterId);
-    if (!chapter) return res.status(404).json({ error: 'Chapter not found' });
-
-    const title = await db.getTitle(chapter.title_id, req.clientId, req.userId);
-    if (!title) return res.status(403).json({ error: 'Forbidden' });
-
-    const VOICES = require('./voices.json');
-    const existingCast = title.casting_map || {};
-    const existingNarrator = title.narrator_voice || null;
-    const tier = title.tts_tier || 'basic';
-
-    debugLog(`AI Casting (${tier}): Analyzing chapter ${chapterId} for ${title.name}`);
-    const result = await aiCasting.analyzeChapter(chapter.content, existingCast, VOICES, existingNarrator, tier);
-
-    // Update Title's casting map and record the narrator if it's the first time
-    const titleUpdate = { casting_map: result.updated_cast };
-    if (!title.narrator_voice) {
-      titleUpdate.narrator_voice = result.narrator_voice;
-    }
-    await db.updateTitle(title.id, titleUpdate);
-
-    const isSSML = tier === 'basic';
-
-    // Update Chapter with SSML content, performance prompt, and flag
-    await db.updateChapter(chapterId, {
-      content: result.ssml,
-      is_ssml: isSSML,
-      voice_id: result.narrator_voice,
-      performance_prompt: result.performance_prompt || null,
-    });
-
-    // Also delete any existing sections because the content has changed
-    await deleteChapterSections(chapterId);
-
-    // Create new sections
-    const parsedSections = isSSML
-      ? splitSSMLIntoSections(result.ssml)
-      : splitMultiSpeakerIntoSections(result.ssml);
-    const sectionData = parsedSections.map((content, index) => ({
-      id: uuidv4(),
-      chapter_id: chapterId,
-      content,
-      section_index: index,
-      status: 'pending'
-    }));
-    await db.insertSections(sectionData);
-
-    res.json({
-      success: true,
-      casting_map: result.updated_cast,
-      ssml: result.ssml,
-      sections_count: sectionData.length
-    });
-  } catch (error) {
-    debugLog(`AI Casting Error: ${error.message}\n${error.stack}`);
-    res.status(500).json({ error: error.message });
-  }
-});
-
 app.get('/api/voices', (req, res) => {
   const VOICES = require('./voices.json');
   const tierFilter = req.query.tier;
@@ -452,16 +410,6 @@ app.post('/api/titles', async (req, res) => {
     res.status(500).json({ error: error.message });
   }
 });
-
-// app.get('/api/titles/:id', async (req, res) => {
-//   try {
-//     const title = await db.getTitle(req.params.id, req.clientId, req.userId);
-//     if (!title) return res.status(404).json({ error: 'Title not found' });
-//     res.json(title);
-//   } catch (error) {
-//     res.status(500).json({ error: error.message });
-//   }
-// });
 
 app.patch('/api/titles/:id', authMiddleware, async (req, res) => {
   const { id } = req.params;
@@ -509,13 +457,7 @@ app.patch('/api/titles/:id', authMiddleware, async (req, res) => {
 
               // Regenerate sections
               const newSections = splitSSMLIntoSections(currentSSML);
-              const sectionData = newSections.map((text, i) => ({
-                id: uuidv4(),
-                chapter_id: ch.id,
-                section_index: i,
-                content: text,
-                status: 'pending'
-              }));
+              const sectionData = buildSectionItems(ch.id, newSections);
               await db.insertSections(sectionData);
             }
           }
@@ -541,19 +483,24 @@ app.delete('/api/titles/:id', async (req, res) => {
   }
 });
 
-// app.get('/api/titles/:titleId/chapters', async (req, res) => {
-//   const { titleId } = req.params;
-//   try {
-//     const rows = await db.getChapters(titleId);
-//     res.json(rows);
-//   } catch (error) {
-//     res.status(500).json({ error: error.message });
-//   }
-// });
-
 app.post('/api/titles/:id/chapters', authMiddleware, async (req, res) => {
   const titleId = req.params.id;
-  let { content, voice_id, name } = req.body;
+  let { content, voice_id, name, google_doc_id, google_access_token } = req.body;
+
+  if (!content && google_doc_id && google_access_token) {
+    try {
+      const auth = new google.auth.OAuth2();
+      auth.setCredentials({ access_token: google_access_token });
+      const docs = google.docs({ version: 'v1', auth });
+      const response = await docs.documents.get({ documentId: google_doc_id });
+      content = extractTextFromGoogleDoc(response.data);
+      if (!name && response.data.title) {
+        name = response.data.title;
+      }
+    } catch (docErr) {
+      return res.status(500).json({ error: 'Failed to fetch Google Document: ' + docErr.message });
+    }
+  }
 
   if (!content) return res.status(400).json({ error: 'Content is required' });
 
@@ -607,14 +554,7 @@ app.post('/api/titles/:id/chapters', authMiddleware, async (req, res) => {
     const sections = isSSML
       ? splitSSMLIntoSections(content)
       : (title.tts_tier === 'pro' ? splitMultiSpeakerIntoSections(content) : breakContentIntoSections(content));
-    const sectionItems = sections.map((text, i) => ({
-      id: uuidv4(),
-      chapter_id: chapterId,
-      section_index: i,
-      content: text,
-      status: 'pending',
-      audio_url: null
-    }));
+    const sectionItems = buildSectionItems(chapterId, sections);
     await db.insertSections(sectionItems);
     res.json({ id: chapterId, title_id: titleId, order_index: orderIndex, name });
   } catch (error) {
@@ -644,13 +584,7 @@ app.patch('/api/chapters/:id', authMiddleware, async (req, res) => {
         ? splitSSMLIntoSections(content)
         : breakContentIntoSections(content);
 
-      const sectionData = newSections.map((text, i) => ({
-        id: uuidv4(),
-        chapter_id: id,
-        section_index: i,
-        content: text,
-        status: 'pending'
-      }));
+      const sectionData = buildSectionItems(id, newSections);
       await db.insertSections(sectionData);
     }
 
