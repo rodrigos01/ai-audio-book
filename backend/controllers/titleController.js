@@ -102,7 +102,7 @@ class TitleController {
           finalName = docResult.title;
         }
       } catch (docErr) {
-        throw new Error('Failed to fetch Google Document: ' + docErr.message);
+        throw new ValidationError('Failed to fetch Google Document: ' + docErr.message);
       }
     }
 
@@ -128,6 +128,14 @@ class TitleController {
 
         const titleUpdate = { casting_map: result.updated_cast };
         if (!title.narrator_voice) titleUpdate.narrator_voice = result.narrator_voice;
+        if (!title.narrator_personality && result.narrator_personality) titleUpdate.narrator_personality = result.narrator_personality;
+
+        if (result.character_personalities) {
+          titleUpdate.character_personalities = {
+            ...(title.character_personalities || {}),
+            ...result.character_personalities
+          };
+        }
         await firestoreStore.updateTitle(titleId, titleUpdate);
 
         finalContent = result.ssml;

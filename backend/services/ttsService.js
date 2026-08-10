@@ -96,47 +96,44 @@ function extractSpeakerConfigsFromText(text, castingMap, narratorVoice) {
   const addedAliases = new Set();
   const usedVoiceIds = new Set();
 
-  const lines = text.split(/\r?\n/);
+  const regex = /\b([a-zA-Z0-9]+):/g;
+  let match;
+  while ((match = regex.exec(text || '')) !== null) {
+    const alias = match[1];
+    if (!addedAliases.has(alias)) {
+      let voiceId = null;
 
-  for (const line of lines) {
-    const match = line.match(/^([a-zA-Z0-9]+):/);
-    if (match) {
-      const alias = match[1];
-      if (!addedAliases.has(alias)) {
-        let voiceId = null;
-
-        if (castingMap && castingMap[alias]) {
-          voiceId = toGeminiVoiceId(castingMap[alias]);
-        }
-
-        if (!voiceId && castingMap) {
-          const foundKey = Object.keys(castingMap).find(k => k.toLowerCase() === alias.toLowerCase());
-          if (foundKey) {
-            voiceId = toGeminiVoiceId(castingMap[foundKey]);
-          }
-        }
-
-        if (!voiceId) {
-          voiceId = toGeminiVoiceId(alias);
-        }
-
-        if (!voiceId && alias.toLowerCase() === 'narrator') {
-          voiceId = toGeminiVoiceId(narratorVoice);
-        }
-
-        if (!voiceId || usedVoiceIds.has(voiceId)) {
-          const availableVoice = [...VALID_GEMINI_VOICES].find(v => !usedVoiceIds.has(v));
-          if (availableVoice) {
-            voiceId = availableVoice;
-          } else if (!voiceId) {
-            voiceId = toGeminiVoiceId(narratorVoice) || 'Aoede';
-          }
-        }
-
-        speakerConfigs.push({ speakerAlias: alias, speakerId: voiceId });
-        addedAliases.add(alias);
-        usedVoiceIds.add(voiceId);
+      if (castingMap && castingMap[alias]) {
+        voiceId = toGeminiVoiceId(castingMap[alias]);
       }
+
+      if (!voiceId && castingMap) {
+        const foundKey = Object.keys(castingMap).find(k => k.toLowerCase() === alias.toLowerCase());
+        if (foundKey) {
+          voiceId = toGeminiVoiceId(castingMap[foundKey]);
+        }
+      }
+
+      if (!voiceId) {
+        voiceId = toGeminiVoiceId(alias);
+      }
+
+      if (!voiceId && alias.toLowerCase() === 'narrator') {
+        voiceId = toGeminiVoiceId(narratorVoice);
+      }
+
+      if (!voiceId || usedVoiceIds.has(voiceId)) {
+        const availableVoice = [...VALID_GEMINI_VOICES].find(v => !usedVoiceIds.has(v));
+        if (availableVoice) {
+          voiceId = availableVoice;
+        } else if (!voiceId) {
+          voiceId = toGeminiVoiceId(narratorVoice) || 'Aoede';
+        }
+      }
+
+      speakerConfigs.push({ speakerAlias: alias, speakerId: voiceId });
+      addedAliases.add(alias);
+      usedVoiceIds.add(voiceId);
     }
   }
 
@@ -197,11 +194,40 @@ function buildSSMLRequest(ssmlContent, voiceId) {
 function buildProRequest(textContent, title, chapter) {
   const castingMap = (title && title.casting_map) || {};
   const narratorVoice = (title && title.narrator_voice) || chapter.voice_id || 'Aoede';
-  const speakerConfigs = extractSpeakerConfigsFromText(textContent, castingMap, narratorVoice);
-  const performancePrompt = (chapter && chapter.performance_prompt)
-    || "Synthesize the text as a multi-speaker dramatic audiobook performance with distinct character voices and natural emotional expressions.";
+  let speakerConfigs = extractSpeakerConfigsFromText(textContent, castingMap, narratorVoice);
+
+  // Guarantee GCP Gemini TTS multi-speaker limit of max 2 distinct speakers per request
+  if (speakerConfigs.length > 2) {
+    speakerConfigs = speakerConfigs.slice(0, 2);
+  }
+
+  const charPersonalities = (title && title.character_personalities) || (chapter && chapter.character_personalities) || {};
+  const narratorPersona = (title && title.narrator_personality) || (chapter && chapter.narrator_personality) || "Calm, steady storyteller with clear tone";
+
+  let performancePrompt;
 
   if (speakerConfigs.length >= 2) {
+    const promptLines = [
+      "Synthesize speech according to these character personalities:",
+      "",
+      `Narrator: ${narratorPersona}`
+    ];
+
+    for (const spk of speakerConfigs) {
+      const alias = spk.speakerAlias;
+      if (alias.toLowerCase() !== 'narrator') {
+        let persona = charPersonalities[alias];
+        if (!persona && charPersonalities) {
+          const key = Object.keys(charPersonalities).find(k => k.toLowerCase() === alias.toLowerCase());
+          if (key) persona = charPersonalities[key];
+        }
+        if (!persona) persona = "Expressive, distinct character voice";
+        promptLines.push(`${alias}: ${persona}`);
+      }
+    }
+
+    performancePrompt = promptLines.join('\n');
+
     return {
       input: { prompt: performancePrompt, text: textContent },
       voice: {
@@ -213,8 +239,23 @@ function buildProRequest(textContent, title, chapter) {
     };
   }
 
+  let singlePersona = narratorPersona;
+  if (speakerConfigs.length === 1) {
+    const alias = speakerConfigs[0].speakerAlias;
+    if (alias.toLowerCase() !== 'narrator') {
+      let persona = charPersonalities[alias];
+      if (!persona && charPersonalities) {
+        const key = Object.keys(charPersonalities).find(k => k.toLowerCase() === alias.toLowerCase());
+        if (key) persona = charPersonalities[key];
+      }
+      if (persona) singlePersona = persona;
+    }
+  }
+
+  performancePrompt = `Synthesize speech according to this personality: ${singlePersona}`;
   const singleVoice = speakerConfigs.length > 0 ? speakerConfigs[0].speakerId : toGeminiVoiceId(narratorVoice);
   const cleanSingleSpeakerText = textContent.replace(/^([a-zA-Z0-9]+):\s*/gm, '').trim();
+
   return {
     input: { prompt: performancePrompt, text: cleanSingleSpeakerText },
     voice: { languageCode: 'en-US', modelName: 'gemini-3.1-flash-tts-preview', name: singleVoice },
@@ -229,6 +270,18 @@ function buildBasicRequest(textContent, voiceId) {
     voice: { languageCode: getLanguageCode(voiceName), name: voiceName },
     audioConfig: { audioEncoding: 'MP3' },
   };
+}
+
+function sanitizeForContentViolation(request) {
+  const retryReq = JSON.parse(JSON.stringify(request));
+  if (retryReq.input && retryReq.input.text) {
+    let text = retryReq.input.text;
+    text = text.replace(/\[[^\]]*\]/g, '');
+    text = text.replace(/[\u201C\u201D"]/g, "'").replace(/[\u2014\u2013]/g, ", ");
+    text = text.replace(/\s+/g, ' ').trim();
+    retryReq.input.text = text;
+  }
+  return retryReq;
 }
 
 async function synthesizeAndCacheSection(title, chapter, section) {
@@ -265,7 +318,21 @@ async function synthesizeAndCacheSection(title, chapter, section) {
     debugLog(msgStart);
     debugLog(`TTS Request Payload for ${section.id}:\n${JSON.stringify(request, null, 2)}`);
 
-    const [response] = await ttsClient.synthesizeSpeech(request);
+    let response;
+    try {
+      [response] = await ttsClient.synthesizeSpeech(request);
+    } catch (primaryErr) {
+      const errStr = (primaryErr.message || '') + (primaryErr.details || '');
+      if (/violation|content|safety|invalid_argument|blocked|policy/i.test(errStr)) {
+        console.warn(`[TTS Safety Retry] Content violation detected for section ${section.id}. Retrying with sanitized text heuristic...`);
+        debugLog(`[TTS Safety Retry] Primary attempt failed for section ${section.id}: ${primaryErr.message}. Retrying with sanitized text...`);
+        const retryRequest = sanitizeForContentViolation(request);
+        [response] = await ttsClient.synthesizeSpeech(retryRequest);
+      } else {
+        throw primaryErr;
+      }
+    }
+
     const audioBuffer = response.audioContent;
     const elapsed = ((Date.now() - startTime) / 1000).toFixed(2);
 

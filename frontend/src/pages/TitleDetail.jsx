@@ -132,19 +132,22 @@ export default function TitleDetail() {
   const handleImportGoogleDoc = async () => {
     try {
       setError(null);
-      if (!googleAccessToken) {
-        // Simple way to refresh token: re-trigger sign in
-        await loginWithGoogle();
-        // State update might be delayed, so we might need to ask the user to click again if it fails
-        setError("Account re-authorized. Please click 'Import' again.");
+      let token = googleAccessToken || sessionStorage.getItem('google_access_token');
+      if (!token) {
+        const loginRes = await loginWithGoogle();
+        token = loginRes?.accessToken || sessionStorage.getItem('google_access_token');
+      }
+      if (!token) {
+        setError('Could not obtain Google access token. Please sign in with Google.');
         return;
       }
-      const doc = await openGooglePicker(googleAccessToken);
+      const doc = await openGooglePicker(token);
       if (doc) {
         setLinkedDoc(doc);
         setChapterName(doc.title);
       }
-    } catch {
+    } catch (err) {
+      console.error('Google Picker Error:', err);
       setError('Failed to open Google Picker. Please ensure popups are allowed and you are signed in.');
     }
   };
@@ -180,9 +183,10 @@ export default function TitleDetail() {
 
       if (linkedDoc) {
         setSyncing(true);
+        const tokenToUse = googleAccessToken || sessionStorage.getItem('google_access_token');
         await api.createChapter(id, {
           googleDocId: linkedDoc.id,
-          googleAccessToken,
+          googleAccessToken: tokenToUse,
           voiceId,
           name: chapterName
         }, firebaseToken);

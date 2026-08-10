@@ -67,7 +67,8 @@ class AICastingService {
             3. For characters in the "Current Title Cast", you MUST reuse their assigned voice ID.
             4. For new characters, assign a voice from the "Available Voices" that matches their characteristics, personality, and gender.
                 - DO NOT assign the same voice to multiple characters.
-            5. Assign a Narrator voice. ${existingNarrator ? `You MUST reuse the existing narrator voice (${existingNarrator}).` : 'ONLY if the content is NOT a first person narrative, select a voice from the "Available Voices". Otherwise, use the same voice as the main character.'}
+            5. For each character and the Narrator, provide a succinct description of how they should sound (e.g. "Inquisitive, articulate host with warm tone", "Calm, steady storyteller with gentle warmth") in the "personality" and "narrator_personality" fields.
+            6. Assign a Narrator voice. ${existingNarrator ? `You MUST reuse the existing narrator voice (${existingNarrator}).` : 'ONLY if the content is NOT a first person narrative, select a voice from the "Available Voices". Otherwise, use the same voice as the main character.'}
 
             ### Chapter Text:
             ${chapterText}
@@ -86,16 +87,24 @@ class AICastingService {
                             },
                             voice_id: {
                                 type: "string"
+                            },
+                            personality: {
+                                type: "string",
+                                description: "Succinct description of how this character should sound"
                             }
                         },
-                        required: ["name", "voice_id"]
+                        required: ["name", "voice_id", "personality"]
                     }
                 },
                 narrator_voice: {
                     type: "string"
+                },
+                narrator_personality: {
+                    type: "string",
+                    description: "Succinct description of how the narrator should sound"
                 }
             },
-            required: ["updated_cast", "narrator_voice"]
+            required: ["updated_cast", "narrator_voice", "narrator_personality"]
         };
 
         const castingResult = await this.genAI.models.generateContent({
@@ -109,6 +118,11 @@ class AICastingService {
         const castingResponse = JSON.parse(castingResult.text);
         const updatedCast = castingResponse.updated_cast.reduce((acc, { name, voice_id }) => {
             acc[name] = voice_id;
+            return acc;
+        }, {});
+
+        const characterPersonalities = castingResponse.updated_cast.reduce((acc, { name, personality }) => {
+            if (personality) acc[name] = personality;
             return acc;
         }, {});
 
@@ -126,12 +140,13 @@ class AICastingService {
                 ${JSON.stringify(updatedCast, null, 2)}
 
                 ### Instructions:
-                1. Format every speaker turn on a new line starting with "SpeakerAlias: Dialogue" (e.g. "Narrator: ...", "Alice: ...").
+                1. Format every speaker turn on a NEW line starting with "SpeakerAlias: Dialogue".
                 2. SpeakerAlias MUST use EXACTLY the character name key from the provided "Casting Map to Use" (e.g. if the casting map key is "Desmond", use "Desmond:"; if "Nora", use "Nora:"; for narration, use "Narrator:"). Do not invent alias variations or use full names if the casting map specifies simple names.
                 3. SpeakerAlias MUST consist solely of alphanumeric characters without spaces (e.g. use "Narrator" for narration, "Alice" for Alice, "Bob" for Bob).
-                4. Add natural language vocal and emotional cues inside brackets within turns (e.g. "[whispering]", "[excitedly]", "[sighs]", "[softly]", "[pause]") to instruct tone, emotion, and rhythm for performance.
-                5. Strip mechanical dialogue attributions (e.g. "she whispered") when translated into natural vocal performance cues ("[whispering]").
-                6. DO NOT use any SSML or XML tags (<speak>, <voice>, <p>, etc.). Output strictly natural multi-speaker script text.
+                4. DO NOT wrap dialogue turns in double quotes or escaped quotes (e.g. write 'Farmer: [bowing respectfully] Madonna Contessa' instead of 'Farmer: "[bowing respectfully] Madonna Contessa"').
+                5. Add natural language vocal and emotional cues inside brackets within turns (e.g. "[whispering]", "[excitedly]", "[sighs]", "[softly]", "[pause]") to instruct tone, emotion, and rhythm for performance.
+                6. Strip mechanical dialogue attributions (e.g. "she whispered") when translated into natural vocal performance cues ("[whispering]").
+                7. DO NOT use any SSML or XML tags (<speak>, <voice>, <p>, etc.). Output strictly natural multi-speaker script text.
 
                 ### Chapter Text:
                 ${chapterText}
@@ -192,8 +207,10 @@ class AICastingService {
 
         return {
             updated_cast: updatedCast,
+            character_personalities: characterPersonalities,
             ssml: formattedOutput,
             narrator_voice: castingResponse.narrator_voice,
+            narrator_personality: castingResponse.narrator_personality || null,
             performance_prompt: performancePrompt,
         };
     }

@@ -9,7 +9,9 @@ export const useAuth = () => useContext(AuthContext);
 
 export const AuthProvider = ({ children }) => {
   const [user, setUser] = useState(null);
-  const [googleAccessToken, setGoogleAccessToken] = useState(null);
+  const [googleAccessToken, setGoogleAccessToken] = useState(() => {
+    return sessionStorage.getItem('google_access_token') || null;
+  });
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
@@ -49,10 +51,12 @@ export const AuthProvider = ({ children }) => {
     try {
       const result = await signInWithPopup(auth, googleProvider);
       const credential = GoogleAuthProvider.credentialFromResult(result);
-      if (credential) {
-        setGoogleAccessToken(credential.accessToken);
+      const token = credential?.accessToken || null;
+      if (token) {
+        setGoogleAccessToken(token);
+        sessionStorage.setItem('google_access_token', token);
       }
-      return result;
+      return { result, accessToken: token };
     } catch (error) {
       console.error('Google login error:', error);
       throw error;
@@ -62,6 +66,7 @@ export const AuthProvider = ({ children }) => {
   const loginWithEmail = (email, password) => signInWithEmailAndPassword(auth, email, password);
   const logout = () => {
     setGoogleAccessToken(null);
+    sessionStorage.removeItem('google_access_token');
     return signOut(auth);
   };
 
