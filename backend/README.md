@@ -1,32 +1,68 @@
 # AI Audio Book Backend
 
-This directory contains the Node.js Express server that manages the metadata, orchestrates speech synthesis via Google Cloud Text-to-Speech, analyzes chapters using Gemini for voice casting, and handles Firestore document manipulation.
+This directory contains the Node.js Express backend server built with a domain-driven, Express-decoupled MVC architecture. It manages metadata, orchestrates speech synthesis via Google Cloud Text-to-Speech (Chirp3 and Gemini Multi-Speaker TTS), performs AI voice casting via Gemini 3.6 Flash, and handles Firestore document manipulation.
 
 ---
 
-## Table of Contents
-1. [Authentication System](#authentication-system)
-2. [API Endpoints](#api-endpoints)
-3. [Configuration & Environment Variables](#configuration--environment-variables)
+## Architecture & Directory Structure
+
+The backend is organized into single-responsibility layers where controllers are **100% Express-free and HTTP-code-free**:
+
+```
+backend/
+├── server.js                     # Express application entry point (middleware & route mounting)
+├── routes/                       # Presentation & HTTP View Layer (parameter extraction, HTTP status codes, response streaming)
+│   ├── titleRoutes.js            # /api/titles endpoints
+│   ├── chapterRoutes.js          # /api/chapters endpoints (preparation & audio streaming)
+│   ├── voiceRoutes.js            # /api/voices catalog endpoint
+│   ├── authRoutes.js             # /api/auth endpoints (title claiming)
+│   └── errorHandler.js           # Domain error -> HTTP status code mapping (400, 401, 403, 404, 500)
+├── controllers/                  # Pure Business Logic Layer (Zero Express/HTTP references)
+│   ├── titleController.js        # Title creation, voice propagation, claimTitles, addChapter (Google Doc & AI casting)
+│   ├── chapterController.js      # Chapter updates, deletion, prepareChapter, streamChapterAudio
+│   └── voiceController.js        # Voice catalog enrichment
+├── stores/                       # Data Management Layer
+│   ├── firestoreStore.js         # Unified Firestore database collection queries & batch updates
+│   └── audioFileStore.js         # Dedicated file storage manager for MP3 caching
+├── services/                     # Domain Services
+│   ├── googleDocsService.js      # Google Docs API text extraction service
+│   ├── aiCastingService.js       # Gemini 3.6 Flash AI voice casting & SSML script generation
+│   ├── ttsService.js             # Google Cloud Text-to-Speech synthesis (Chirp3 & Gemini Multi-Speaker TTS)
+│   ├── textSplitterService.js    # Text & SSML sectioning routines with pre-calculated timing
+│   └── logger.js                 # Centralized logging helper
+├── middleware/                   # Express Middlewares
+│   ├── auth.js                   # Firebase ID Token verification
+│   └── clientId.js               # Anonymous client ID cookie & header assignment
+└── utils/                        # Utilities & Domain Errors
+    └── errors.js                 # Semantic domain errors (ValidationError, NotFoundError, UnauthorizedError, ForbiddenError)
+```
+
+---
+
+## Domain Errors & Router Translation
+
+Controllers throw semantic domain errors from `utils/errors.js` without referencing any HTTP status codes:
+
+- `ValidationError` -> Router translates to `400 Bad Request`
+- `UnauthorizedError` -> Router translates to `401 Unauthorized`
+- `ForbiddenError` -> Router translates to `403 Forbidden`
+- `NotFoundError` -> Router translates to `404 Not Found`
+- Generic `Error` -> Router translates to `500 Internal Server Error`
 
 ---
 
 ## Authentication System
 
-The backend employs a hybrid authentication model to support both signed-in users and anonymous sessions:
+The backend employs a hybrid authentication model supporting both signed-in users and anonymous sessions:
 
 ### 1. Firebase Authentication
-* For authenticated API calls, the server expects a Firebase ID token.
-* The server retrieves this token using the `authMiddleware` ([backend/auth.js](file:///home/rodrigo/dev/node/ai-audio-book/backend/auth.js)):
-  * **Authorization Header:** `Authorization: Bearer <ID_TOKEN>`
-  * **Query Parameter:** `?token=<ID_TOKEN>` (primarily used for streaming audio where custom headers are difficult to send).
+* For authenticated API calls, the server expects a Firebase ID token passed in the `Authorization` header (`Authorization: Bearer <ID_TOKEN>`) or `?token=<ID_TOKEN>` query parameter.
 * Verified Firebase tokens assign the user's UID to `req.userId`.
 
 ### 2. Client ID Cookies (Anonymous Sessions)
-* When a user visits the app without signing in, the server assigns a persistent, 1-year anonymous identifier cookie named `client_id` ([backend/server.js](file:///home/rodrigo/dev/node/ai-audio-book/backend/server.js#L91-L100)).
-* The cookie options are `{ maxAge: 1 year, httpOnly: true, sameSite: 'lax' }`.
-* The server uses this `client_id` (stored in `req.clientId`) to group and query titles created by the anonymous user.
-* Anonymous titles can later be linked (claimed) to a registered user account via the `/api/auth/claim` endpoint.
+* Unauthenticated visitors receive a persistent 1-year anonymous identifier cookie named `client_id`.
+* The server uses this `client_id` (stored in `req.clientId`) to associate and query titles created during guest sessions.
+* Guest titles can be claimed by a registered user account via `POST /api/auth/claim`.
 
 ---
 
@@ -34,153 +70,82 @@ The backend employs a hybrid authentication model to support both signed-in user
 
 ### Health Check
 * **`GET /health`**
-  * Status check endpoint bypasses general middlewares.
-  * **Response:** `200 OK` (plain text)
+  * Status check endpoint.
+  * **Response:** `200 OK` (`OK`)
 
 ### Authentication
 * **`POST /api/auth/claim`**
-  * Promotes all titles owned by the current `clientId` to be owned by the authenticated `userId`.
-  * **Authentication:** Required (Must provide Firebase ID token)
-  * **Response:** `200 OK`
-    ```json
-    { "success": true, "claimed_count": 5 }
-    ```
+  * Claims all anonymous titles matching current `clientId` and re-assigns them to the logged-in `userId`.
+  * **Authentication:** Required (Firebase Bearer token)
+  * **Response:** `200 OK` (`{ "success": true, "claimed_count": 5 }`)
 
 ### Voices
 * **`GET /api/voices`**
-  * Retrieves all available Google Cloud Text-to-Speech voices from the internal list with corresponding preview sample URLs.
-  * **Authentication:** Optional/None
-  * **Response:** `200 OK`
-    ```json
-    [
-      {
-        "id": "en-US-Chirp3-HD-Aoede",
-        "name": "Aoede (HD)",
-        "gender": "FEMALE",
-        "lang": "en-US",
-        "sampleUrl": "/samples/en-US-Chirp3-HD-Aoede.mp3"
-      }
-    ]
-    ```
+  * Retrieves available Google Cloud Text-to-Speech voices with preview sample URLs.
+  * **Query Parameters:** `tier` (`basic` or `pro`, optional).
+  * **Response:** `200 OK` (JSON array of enriched voice objects).
 
 ### Titles
 * **`POST /api/titles`**
   * Creates a new audiobook title.
-  * **Authentication:** Optional (Uses `clientId` and optional `userId` context)
-  * **Body:**
-    ```json
-    {
-      "name": "My New Audiobook",
-      "ai_casting_enabled": true
-    }
-    ```
-  * **Response:** `200 OK` with the created title metadata.
+  * **Body:** `{ "name": "Title Name", "ai_casting_enabled": true, "tts_tier": "basic", "narrator_voice": "Aoede" }`
+  * **Response:** `200 OK` (Created title object).
 
 * **`PATCH /api/titles/:id`**
-  * Updates title metadata (e.g., name, narrator voice, or casting maps).
-  * **Authentication:** Required (User must own the title)
-  * **Body:**
-    ```json
-    {
-      "name": "Updated Title Name",
-      "casting_map": {
-        "NARRATOR": "en-US-Chirp3-HD-Aoede",
-        "Alice": "en-US-Journey-F"
-      },
-      "narrator_voice": "en-US-Chirp3-HD-Aoede"
-    }
-    ```
-  * **Response:** `{ "success": true }`
+  * Updates title metadata. Automatically propagates character voice changes to existing SSML chapters.
+  * **Authentication:** Required
+  * **Body:** `{ "name": "New Name", "casting_map": { "Alice": "Aoede" }, "narrator_voice": "Puck" }`
+  * **Response:** `200 OK` (`{ "success": true }`)
 
 * **`DELETE /api/titles/:id`**
   * Deletes a title.
-  * **Authentication:** Optional/Context-based (User must own the title)
-  * **Response:** `{ "success": true }`
+  * **Response:** `200 OK` (`{ "success": true }`)
+
+* **`POST /api/titles/:id/chapters`**
+  * Adds a chapter to a title in a single request. Supports raw text content OR Google Docs import via `{ google_doc_id, google_access_token }`. Automatically runs AI voice casting if enabled.
+  * **Authentication:** Required
+  * **Body:**
+    ```json
+    {
+      "name": "Chapter 1",
+      "content": "Raw chapter text...",
+      "voice_id": "Aoede",
+      "google_doc_id": "1a2b3c...",
+      "google_access_token": "ya29..."
+    }
+    ```
+  * **Response:** `200 OK` (Created chapter metadata).
 
 ### Chapters
-* **`POST /api/titles/:id/chapters`**
-  * Adds a chapter to the title. If AI casting is enabled on the title, it parses the content and generates SSML voice markers.
-  * **Authentication:** Required (User must own the title)
-  * **Body:**
-    ```json
-    {
-      "name": "Chapter 1: The Beginning",
-      "content": "Chapter text contents...",
-      "voice_id": "en-US-Chirp3-HD-Aoede"
-    }
-    ```
-  * **Response:** `200 OK` containing created chapter metadata and ID.
-
 * **`PATCH /api/chapters/:id`**
-  * Updates chapter content or name. Changing the content deletes old generated audio sections and schedules new ones.
-  * **Authentication:** Required (User must own the parent title)
-  * **Body:**
-    ```json
-    {
-      "name": "Chapter 1: Redux",
-      "content": "Updated chapter contents...",
-      "is_ssml": false
-    }
-    ```
-  * **Response:** `{ "success": true }`
+  * Updates chapter content or name. Cleans up old audio sections and regenerates section timing offsets.
+  * **Authentication:** Required
+  * **Body:** `{ "name": "New Name", "content": "Updated content..." }`
+  * **Response:** `200 OK` (`{ "success": true }`)
 
 * **`DELETE /api/chapters/:id`**
-  * Deletes a chapter.
-  * **Authentication:** Optional/Context-based (User must own the parent title)
-  * **Response:** `{ "success": true }`
+  * Deletes a chapter, its section documents, and associated audio files.
+  * **Response:** `200 OK` (`{ "success": true }`)
 
-* **`POST /api/chapters/:chapterId/cast`**
-  * Triggers Gemini-based character analysis to map dialogue to different voices and outputs SSML syntax.
-  * **Authentication:** Required (User must own the parent title)
-  * **Response:** `200 OK`
-    ```json
-    {
-      "success": true,
-      "casting_map": {
-        "Narrator": "en-US-Chirp3-HD-Charon",
-        "Bob": "en-US-Chirp3-HD-Fenrir"
-      },
-      "ssml": "<speak>...</speak>",
-      "sections_count": 5
-    }
-    ```
+* **`POST /api/chapters/:chapterId/prepare`**
+  * Pre-generates and caches section audio files for offline download playback.
+  * **Authentication:** Required
+  * **Response:** `200 OK` (`{ "totalSections": 10, "generatedSections": 10, "ready": true }`)
 
-### Audio Streaming & Generation
 * **`GET /api/chapters/:chapterId/stream`**
-  * Streams chunked MP3 audio generated from the chapter's sections. Automatically invokes Google Cloud Text-to-Speech synthesis for any pending sections and caches the audio files locally.
-  * **Authentication:** Required (Checks authorization bearer token or `token` query parameter)
-  * **Query Parameters:**
-    * `offset`: The section index to start streaming from (default is `0`).
-    * `token`: Firebase ID Token (if header authorization isn't used).
-  * **Response:** `200 OK` with `Content-Type: audio/mpeg` using chunked transfer encoding.
-
-### Google Docs Integration
-* **`POST /api/google-docs/fetch`**
-  * Authenticates with Google Drive/Docs API using a provided Google Access Token to retrieve document text content.
-  * **Authentication:** Receives a `googleAccessToken` in the request body.
-  * **Body:**
-    ```json
-    {
-      "documentId": "1a2b3c4d5e6f...",
-      "googleAccessToken": "ya29.a0AfH6S..."
-    }
-    ```
-  * **Response:**
-    ```json
-    {
-      "title": "My Google Doc Title",
-      "content": "Extracted text content from the document..."
-    }
-    ```
+  * Streams chunked MP3 audio generated from chapter sections. Synthesizes pending sections on demand.
+  * **Query Parameters:** `offset` (section index, default `0`), `token` (Firebase ID Token).
+  * **Response:** `200 OK` (`Content-Type: audio/mpeg`, chunked transfer encoding).
 
 ---
 
 ## Configuration & Environment Variables
 
-Make sure to establish a `.env` file in the `backend/` directory with the following properties:
+Create a `.env` file in the `backend/` directory:
 
 ```ini
 PORT=3005
 STORAGE_BASE_PATH=./storage
 GOOGLE_APPLICATION_CREDENTIALS=./ai-audio-book-36e0611138d4.json
+GEMINI_API_KEY=AIzaSy...
 ```
