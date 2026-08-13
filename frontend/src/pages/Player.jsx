@@ -1,5 +1,6 @@
 import { useEffect, useState, useRef, useCallback } from 'react';
 import { useParams, Link } from 'react-router-dom';
+import Hls from 'hls.js';
 import { api } from '../lib/api';
 import { useAuth } from '../context/AuthContext';
 import { useDownloads } from '../context/DownloadsContext';
@@ -63,53 +64,25 @@ export default function Player() {
   const [isScrubbing, setIsScrubbing] = useState(false);
   const [scrubTime, setScrubTime] = useState(0);
   const [chapter, setChapter] = useState(null);
-  const [currentSectionIndex, setCurrentSectionIndex] = useState(0);
-  const [seekToTime, setSeekToTime] = useState(null);
   const [authToken, setAuthToken] = useState(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
   const [isOfflinePlayback, setIsOfflinePlayback] = useState(false);
   const [offlineUrl, setOfflineUrl] = useState(null);
 
-  const currentSection = chapter?.sections?.[currentSectionIndex];
-  const sectionOffset = isOfflinePlayback || currentSectionIndex === 0 ? 0 : (currentSection?.estimated_start_time || 0);
   const hasFiniteDuration = !isNaN(duration) && isFinite(duration) && duration > 0;
   const totalDuration = isOfflinePlayback && hasFiniteDuration
     ? duration
-    : (hasFiniteDuration && currentSectionIndex === 0 && duration > (chapter?.estimated_duration_seconds || 0))
+    : (hasFiniteDuration && duration > (chapter?.estimated_duration_seconds || 0))
       ? duration
       : (chapter?.estimated_duration_seconds || duration || 0);
-  const displayCurrentTime = isScrubbing ? scrubTime : sectionOffset + currentTime;
+  const displayCurrentTime = isScrubbing ? scrubTime : currentTime;
   const backTarget = chapter?.title_id ? `/title/${chapter.title_id}` : '/';
   const backLabel = chapter?.title_name ? `Back to ${chapter.title_name}` : (chapter?.title_id ? 'Back to Title' : 'Back to Library');
 
   const handleSeekTo = (targetTime) => {
-    if (isOfflinePlayback) {
-      if (audioRef.current) audioRef.current.currentTime = targetTime;
-      return;
-    }
-    if (!chapter?.sections) return;
-
-    // Find the section that covers the target time
-    let selectedSectionIndex = chapter.sections.findIndex((s, idx) => {
-      const nextSection = chapter.sections[idx + 1];
-      return targetTime >= s.estimated_start_time && (!nextSection || targetTime < nextSection.estimated_start_time);
-    });
-
-    if (selectedSectionIndex === -1) selectedSectionIndex = chapter.sections.length - 1;
-
-    const section = chapter.sections[selectedSectionIndex];
-    const timeWithinSection = targetTime - section.estimated_start_time;
-
-    if (selectedSectionIndex === currentSectionIndex) {
-      // Just seek within the current stream
-      if (audioRef.current) {
-        audioRef.current.currentTime = timeWithinSection;
-      }
-    } else {
-      // Remounting the audio element via key will trigger a fresh load
-      setSeekToTime(timeWithinSection);
-      setCurrentSectionIndex(selectedSectionIndex);
+    if (audioRef.current) {
+      audioRef.current.currentTime = targetTime;
     }
   };
 
@@ -283,24 +256,54 @@ export default function Player() {
       audio.removeEventListener('ended', onEnded);
       audio.removeEventListener('error', onError);
     };
-  }, [currentSectionIndex, chapter]);
+    audio.addEventListener('play', onPlay);
+    audio.addEventListener('pause', onPause);
+    audio.addEventListener('timeupdate', onTimeUpdate);
+    audio.addEventListener('durationchange', onDurationChange);
+    audio.addEventListener('waiting', onWaiting);
+    audio.addEventListener('playing', onPlaying);
+    audio.addEventListener('ended', onEnded);
+    audio.addEventListener('error', onError);
 
-  // Handle seeking to a specific time within a new stream
+    return () => {
+      audio.removeEventListener('play', onPlay);
+      audio.removeEventListener('pause', onPause);
+      audio.removeEventListener('timeupdate', onTimeUpdate);
+      audio.removeEventListener('durationchange', onDurationChange);
+      audio.removeEventListener('waiting', onWaiting);
+      audio.removeEventListener('playing', onPlaying);
+      audio.removeEventListener('ended', onEnded);
+      audio.removeEventListener('error', onError);
+    };
+  }, [chapter]);
+
+  // HLS stream attach effect
   useEffect(() => {
-    const audio = audioRef.current;
-    if (!audio || seekToTime === null) return;
+    if (!chapter || loading || isOfflinePlayback || !audioRef.current) return;
 
-    const onCanPlay = () => {
-      if (seekToTime !== null) {
-        audio.currentTime = seekToTime;
-        setSeekToTime(null);
-        audio.play();
+    const audio = audioRef.current;
+    const hlsUrl = api.getHlsPlaylistUrl(chapterId, authToken);
+    let hls = null;
+
+    if (audio.canPlayType('application/vnd.apple.mpegurl')) {
+      audio.src = hlsUrl;
+    } else if (Hls.isSupported()) {
+      hls = new Hls({
+        enableWorker: true,
+        lowLatencyMode: false
+      });
+      hls.loadSource(hlsUrl);
+      hls.attachMedia(audio);
+    } else {
+      audio.src = api.getStreamUrl(chapterId, 0, authToken);
+    }
+
+    return () => {
+      if (hls) {
+        hls.destroy();
       }
     };
-
-    audio.addEventListener('canplay', onCanPlay);
-    return () => audio.removeEventListener('canplay', onCanPlay);
-  }, [seekToTime]);
+  }, [chapterId, authToken, isOfflinePlayback, loading, chapter]);
 
   // Sync slider value
   useEffect(() => {
@@ -545,13 +548,11 @@ export default function Player() {
         {chapter && !loading && !isOfflinePlayback && (
           <audio
             ref={audioRef}
-            key={`${chapterId}-${currentSectionIndex}-${authToken}`}
+            key={`hls-${chapterId}-${authToken}`}
             autoPlay
             preload="auto"
             style={{ display: 'none' }}
-          >
-            <source src={api.getStreamUrl(chapterId, currentSectionIndex, authToken)} type="audio/mpeg" />
-          </audio>
+          />
         )}
 
         <div style={{

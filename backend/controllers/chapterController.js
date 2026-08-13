@@ -96,6 +96,72 @@ class ChapterController {
       }
     }
   }
+
+  async getHLSPlaylist({ chapterId, clientId, userId, queryParams = {} }) {
+    const chapter = await firestoreStore.getChapter(chapterId);
+    if (!chapter) throw new NotFoundError('Chapter not found');
+    const title = await firestoreStore.getTitle(chapter.title_id, clientId, userId) || await firestoreStore.getTitleById(chapter.title_id);
+    if (!title) throw new ForbiddenError('Forbidden');
+
+    const sections = await firestoreStore.getSections(chapterId, 0);
+    if (!sections || sections.length === 0) {
+      throw new NotFoundError('No sections found for chapter');
+    }
+
+    const queryParts = [];
+    if (queryParams.token) queryParts.push(`token=${encodeURIComponent(queryParams.token)}`);
+    if (queryParams.client_id) queryParts.push(`client_id=${encodeURIComponent(queryParams.client_id)}`);
+    const queryString = queryParts.length > 0 ? `?${queryParts.join('&')}` : '';
+
+    let maxDuration = 1;
+    const items = [];
+
+    for (let i = 0; i < sections.length; i++) {
+      const s = sections[i];
+      let dur = s.estimated_duration;
+      if (dur == null || isNaN(dur) || dur <= 0) {
+        const spokenText = (s.content || '').replace(/<[^>]*>/g, '').trim();
+        dur = spokenText.length > 0 ? spokenText.length / 14.5 + 0.5 : 0.5;
+      }
+      if (dur > maxDuration) maxDuration = dur;
+
+      items.push(`#EXTINF:${dur.toFixed(3)},\nsegment/${i}${queryString}`);
+    }
+
+    const targetDuration = Math.max(1, Math.ceil(maxDuration));
+    const playlist = [
+      '#EXTM3U',
+      '#EXT-X-VERSION:3',
+      `#EXT-X-TARGETDURATION:${targetDuration}`,
+      '#EXT-X-MEDIA-SEQUENCE:0',
+      '#EXT-X-PLAYLIST-TYPE:VOD',
+      ...items,
+      '#EXT-X-ENDLIST',
+      ''
+    ].join('\n');
+
+    return playlist;
+  }
+
+  async streamHLSSegment({ chapterId, sectionIndex, clientId, userId }) {
+    const chapter = await firestoreStore.getChapter(chapterId);
+    if (!chapter) throw new NotFoundError('Chapter not found');
+    const title = await firestoreStore.getTitle(chapter.title_id, clientId, userId) || await firestoreStore.getTitleById(chapter.title_id);
+    if (!title) throw new ForbiddenError('Forbidden');
+
+    const sections = await firestoreStore.getSections(chapterId, 0);
+    const idx = parseInt(sectionIndex, 10);
+    if (isNaN(idx) || idx < 0 || idx >= sections.length) {
+      throw new NotFoundError('Section index out of bounds');
+    }
+
+    const section = sections[idx];
+    const audioBuffer = audioFileStore.readSectionAudio(section.id)
+      || await synthesizeAndCacheSection(title, chapter, section);
+
+    return audioBuffer;
+  }
 }
 
 module.exports = new ChapterController();
+

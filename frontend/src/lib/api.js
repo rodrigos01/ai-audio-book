@@ -133,6 +133,15 @@ export const api = {
     if (localCid) url += `&client_id=${encodeURIComponent(localCid)}`;
     return url;
   },
+  getHlsPlaylistUrl: (chapterId, token = null) => {
+    let url = `${API_BASE}/chapters/${chapterId}/hls`;
+    const params = [];
+    if (token) params.push(`token=${encodeURIComponent(token)}`);
+    const localCid = getLocalClientId();
+    if (localCid) params.push(`client_id=${encodeURIComponent(localCid)}`);
+    if (params.length > 0) url += `?${params.join('&')}`;
+    return url;
+  },
   claimBooks: async (token) => {
     const res = await request(`${API_BASE}/auth/claim`, {
       method: 'POST'

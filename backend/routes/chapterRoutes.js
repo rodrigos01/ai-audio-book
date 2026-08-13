@@ -76,4 +76,52 @@ router.get('/:chapterId/stream', async (req, res) => {
   }
 });
 
+router.get('/:chapterId/hls/playlist.m3u8', async (req, res) => {
+  try {
+    const playlist = await chapterController.getHLSPlaylist({
+      chapterId: req.params.chapterId,
+      clientId: req.clientId,
+      userId: req.userId,
+      queryParams: req.query
+    });
+
+    res.setHeader('Content-Type', 'application/vnd.apple.mpegurl');
+    res.setHeader('Cache-Control', 'no-cache');
+    res.send(playlist);
+  } catch (err) {
+    handleRouteError(res, err);
+  }
+});
+
+const handleSegmentRequest = async (req, res) => {
+  let isClosed = false;
+  req.on('close', () => { isClosed = true; });
+
+  try {
+    const audioBuffer = await chapterController.streamHLSSegment({
+      chapterId: req.params.chapterId,
+      sectionIndex: req.params.sectionIndex,
+      clientId: req.clientId,
+      userId: req.userId
+    });
+
+    if (!isClosed) {
+      res.setHeader('Content-Type', 'audio/mpeg');
+      res.setHeader('Content-Length', audioBuffer.length);
+      res.setHeader('Accept-Ranges', 'bytes');
+      res.send(audioBuffer);
+    }
+  } catch (err) {
+    if (res.headersSent) {
+      res.destroy();
+    } else {
+      handleRouteError(res, err);
+    }
+  }
+};
+
+router.get('/:chapterId/hls/segment/:sectionIndex', handleSegmentRequest);
+router.get('/:chapterId/hls/segment/:sectionIndex.mp3', handleSegmentRequest);
+
 module.exports = router;
+
