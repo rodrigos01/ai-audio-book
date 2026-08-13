@@ -40,6 +40,9 @@ class ChapterController {
   async prepareChapter({ chapterId, clientId, userId, isClosedCheck, deadlineMs = 50000 }) {
     const chapter = await firestoreStore.getChapter(chapterId);
     if (!chapter) throw new NotFoundError('Chapter not found');
+    if (chapter.ai_casting_status === 'in_progress') {
+      throw new NotFoundError('AI Voice Casting is currently in progress for this chapter');
+    }
     const title = await firestoreStore.getTitle(chapter.title_id, clientId, userId) || await firestoreStore.getTitleById(chapter.title_id);
     if (!title) throw new ForbiddenError('Forbidden');
 
@@ -71,6 +74,9 @@ class ChapterController {
   async streamChapterAudio({ chapterId, offset = 0, onReady, onAudioChunk, isClosedCheck }) {
     const chapter = await firestoreStore.getChapter(chapterId);
     if (!chapter) throw new NotFoundError('Chapter not found');
+    if (chapter.ai_casting_status === 'in_progress') {
+      throw new NotFoundError('AI Voice Casting is currently in progress for this chapter');
+    }
     const title = await firestoreStore.getTitleById(chapter.title_id);
 
     debugLog(`Streaming ${chapterId} starting from offset ${offset}`);
@@ -100,6 +106,9 @@ class ChapterController {
   async getHLSPlaylist({ chapterId, clientId, userId, queryParams = {} }) {
     const chapter = await firestoreStore.getChapter(chapterId);
     if (!chapter) throw new NotFoundError('Chapter not found');
+    if (chapter.ai_casting_status === 'in_progress') {
+      throw new NotFoundError('AI Voice Casting is currently in progress for this chapter');
+    }
     const title = await firestoreStore.getTitle(chapter.title_id, clientId, userId) || await firestoreStore.getTitleById(chapter.title_id);
     if (!title) throw new ForbiddenError('Forbidden');
 
@@ -146,6 +155,9 @@ class ChapterController {
   async streamHLSSegment({ chapterId, sectionIndex, clientId, userId }) {
     const chapter = await firestoreStore.getChapter(chapterId);
     if (!chapter) throw new NotFoundError('Chapter not found');
+    if (chapter.ai_casting_status === 'in_progress') {
+      throw new NotFoundError('AI Voice Casting is currently in progress for this chapter');
+    }
     const title = await firestoreStore.getTitle(chapter.title_id, clientId, userId) || await firestoreStore.getTitleById(chapter.title_id);
     if (!title) throw new ForbiddenError('Forbidden');
 

@@ -113,59 +113,90 @@ class TitleController {
 
     const maxOrder = await firestoreStore.getMaxChapterOrder(titleId);
     const orderIndex = maxOrder + 1;
-    let voiceId = voice_id || 'en-US-Chirp3-HD-Aoede';
-    let isSSML = false;
-    let performancePrompt = null;
-
-    if (title.ai_casting_enabled) {
-      try {
-        const tier = title.tts_tier || 'basic';
-        debugLog(`AI Casting (${tier}): Auto-casting new chapter for ${title.name}`);
-        const existingCast = title.casting_map || {};
-        const existingNarrator = title.narrator_voice || null;
-
-        const result = await aiCasting.analyzeChapter(finalContent, existingCast, VOICES, existingNarrator, tier);
-
-        const titleUpdate = { casting_map: result.updated_cast };
-        if (!title.narrator_voice) titleUpdate.narrator_voice = result.narrator_voice;
-        if (!title.narrator_personality && result.narrator_personality) titleUpdate.narrator_personality = result.narrator_personality;
-
-        if (result.character_personalities) {
-          titleUpdate.character_personalities = {
-            ...(title.character_personalities || {}),
-            ...result.character_personalities
-          };
-        }
-        await firestoreStore.updateTitle(titleId, titleUpdate);
-
-        finalContent = result.ssml;
-        voiceId = result.narrator_voice;
-        isSSML = tier === 'basic';
-        performancePrompt = result.performance_prompt || null;
-      } catch (castError) {
-        debugLog(`Auto-casting failed, falling back to standard: ${castError.message}`);
-      }
-    }
-
+    const voiceId = voice_id || title.narrator_voice || 'en-US-Chirp3-HD-Aoede';
+    const isAiCasting = !!title.ai_casting_enabled;
     const chapterId = uuidv4();
+
     await firestoreStore.createChapter({
       id: chapterId,
       title_id: titleId,
       order_index: orderIndex,
       content: finalContent,
       voice_id: voiceId,
-      is_ssml: isSSML,
-      performance_prompt: performancePrompt,
-      name: finalName || null
+      is_ssml: false,
+      performance_prompt: null,
+      name: finalName || null,
+      ai_casting_status: isAiCasting ? 'in_progress' : null
     });
 
-    const sections = isSSML
-      ? splitSSMLIntoSections(finalContent)
-      : (title.tts_tier === 'pro' ? splitMultiSpeakerIntoSections(finalContent) : breakContentIntoSections(finalContent));
+    if (isAiCasting) {
+      this._processAiCastingInBackground({ chapterId, titleId, finalContent, title }).catch(err => {
+        debugLog(`Unhandled background AI casting error for chapter ${chapterId}: ${err.message}`);
+      });
+      return { id: chapterId, title_id: titleId, order_index: orderIndex, name: finalName || null, ai_casting_status: 'in_progress' };
+    }
+
+    const sections = title.tts_tier === 'pro'
+      ? splitMultiSpeakerIntoSections(finalContent)
+      : breakContentIntoSections(finalContent);
     const sectionItems = buildSectionItems(chapterId, sections);
     await firestoreStore.insertSections(sectionItems);
 
-    return { id: chapterId, title_id: titleId, order_index: orderIndex, name: finalName || null };
+    return { id: chapterId, title_id: titleId, order_index: orderIndex, name: finalName || null, ai_casting_status: null };
+  }
+
+  async _processAiCastingInBackground({ chapterId, titleId, finalContent, title }) {
+    try {
+      const tier = title.tts_tier || 'basic';
+      debugLog(`AI Casting background (${tier}): Auto-casting new chapter ${chapterId} for ${title.name}`);
+      const existingCast = title.casting_map || {};
+      const existingNarrator = title.narrator_voice || null;
+
+      const result = await aiCasting.analyzeChapter(finalContent, existingCast, VOICES, existingNarrator, tier);
+
+      const titleUpdate = { casting_map: result.updated_cast };
+      if (!title.narrator_voice) titleUpdate.narrator_voice = result.narrator_voice;
+      if (!title.narrator_personality && result.narrator_personality) titleUpdate.narrator_personality = result.narrator_personality;
+
+      if (result.character_personalities) {
+        titleUpdate.character_personalities = {
+          ...(title.character_personalities || {}),
+          ...result.character_personalities
+        };
+      }
+      await firestoreStore.updateTitle(titleId, titleUpdate);
+
+      const processedContent = result.ssml;
+      const voiceId = result.narrator_voice;
+      const isSSML = tier === 'basic';
+      const performancePrompt = result.performance_prompt || null;
+
+      await firestoreStore.updateChapter(chapterId, {
+        content: processedContent,
+        voice_id: voiceId,
+        is_ssml: isSSML,
+        performance_prompt: performancePrompt,
+        ai_casting_status: 'completed'
+      });
+
+      const sections = isSSML
+        ? splitSSMLIntoSections(processedContent)
+        : (tier === 'pro' ? splitMultiSpeakerIntoSections(processedContent) : breakContentIntoSections(processedContent));
+      const sectionItems = buildSectionItems(chapterId, sections);
+      await firestoreStore.insertSections(sectionItems);
+
+      debugLog(`AI Casting background completed successfully for chapter ${chapterId}`);
+    } catch (castError) {
+      debugLog(`Auto-casting background failed for chapter ${chapterId}, falling back to standard: ${castError.message}`);
+      const tier = title.tts_tier || 'basic';
+      const sections = tier === 'pro' ? splitMultiSpeakerIntoSections(finalContent) : breakContentIntoSections(finalContent);
+      const sectionItems = buildSectionItems(chapterId, sections);
+      await firestoreStore.insertSections(sectionItems);
+
+      await firestoreStore.updateChapter(chapterId, {
+        ai_casting_status: 'failed'
+      });
+    }
   }
 }
 

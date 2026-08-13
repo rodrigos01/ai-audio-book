@@ -51,6 +51,7 @@ Contains the textual or SSML content for individual audiobook sections/chapters.
   | `content` | `String` | Raw narrative text, or SSML markup text enclosing dialogues in `<voice>` blocks. |
   | `voice_id` | `String` | Voice identifier used for narration or fallback. |
   | `is_ssml` | `Boolean` | Flag specifying if content contains SSML tagging. |
+  | `ai_casting_status` | `String` \| `null` | AI voice casting status: `'in_progress'`, `'completed'`, `'failed'`, or `null`. |
   | `created_at` | `Timestamp` | Server timestamp of chapter creation. |
 
 * **Security Rules:**

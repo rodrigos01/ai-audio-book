@@ -118,6 +118,12 @@ export default function Player() {
         chapterData = { id: chapterSnap.id, ...chapterSnap.data() };
       }
 
+      if (chapterData?.ai_casting_status === 'in_progress') {
+        setError('AI Voice Casting is currently in progress for this chapter. Please wait until casting completes to play.');
+        setLoading(false);
+        return;
+      }
+
       // 2. Get Title (for title name and permission check)
       if (chapterData) {
         const titleRef = doc(db, 'titles', chapterData.title_id);
@@ -237,25 +243,6 @@ export default function Player() {
       setIsBuffering(false);
     };
 
-    audio.addEventListener('play', onPlay);
-    audio.addEventListener('pause', onPause);
-    audio.addEventListener('timeupdate', onTimeUpdate);
-    audio.addEventListener('durationchange', onDurationChange);
-    audio.addEventListener('waiting', onWaiting);
-    audio.addEventListener('playing', onPlaying);
-    audio.addEventListener('ended', onEnded);
-    audio.addEventListener('error', onError);
-
-    return () => {
-      audio.removeEventListener('play', onPlay);
-      audio.removeEventListener('pause', onPause);
-      audio.removeEventListener('timeupdate', onTimeUpdate);
-      audio.removeEventListener('durationchange', onDurationChange);
-      audio.removeEventListener('waiting', onWaiting);
-      audio.removeEventListener('playing', onPlaying);
-      audio.removeEventListener('ended', onEnded);
-      audio.removeEventListener('error', onError);
-    };
     audio.addEventListener('play', onPlay);
     audio.addEventListener('pause', onPause);
     audio.addEventListener('timeupdate', onTimeUpdate);

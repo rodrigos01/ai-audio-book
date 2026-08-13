@@ -5,7 +5,7 @@ import { openGooglePicker } from '../lib/googlePicker';
 import { useAuth } from '../context/AuthContext';
 import { useDownloads } from '../context/DownloadsContext';
 import { db } from '../lib/firebase';
-import { doc, collection, query, where, onSnapshot, orderBy, getDoc } from 'firebase/firestore';
+import { doc, collection, query, where, onSnapshot, orderBy } from 'firebase/firestore';
 
 export default function TitleDetail() {
   const { id } = useParams();
@@ -55,9 +55,9 @@ export default function TitleDetail() {
     setLoading(true);
     setError(null);
 
-    // 1. Fetch Title for metadata and permission check
+    // 1. Subscribe to Title for metadata and permission check
     const titleRef = doc(db, 'titles', id);
-    getDoc(titleRef).then(snap => {
+    const unsubTitle = onSnapshot(titleRef, (snap) => {
       if (!snap.exists()) {
         setError('Book not found');
       } else {
@@ -65,7 +65,7 @@ export default function TitleDetail() {
         setTitle({ id: snap.id, ...data });
         if (data.casting_map) setCastingMap(data.casting_map);
       }
-    }).catch(err => {
+    }, (err) => {
       if (err.code === 'permission-denied') {
         setError('You do not have permission to access this book.');
       } else {
@@ -94,7 +94,10 @@ export default function TitleDetail() {
       }
     });
 
-    return unsubscribe;
+    return () => {
+      unsubTitle();
+      unsubscribe();
+    };
   }, [id, user, voices.length]);
 
   const loadVoices = useCallback(async () => {
@@ -409,8 +412,8 @@ export default function TitleDetail() {
                       </md-list-item>
                     ) : (
                       <md-list-item 
-                        type="button" 
-                        onClick={() => editingChapterId !== chapter.id && navigate(`/player/${chapter.id}`)}
+                        type={chapter.ai_casting_status === 'in_progress' ? undefined : 'button'} 
+                        onClick={() => editingChapterId !== chapter.id && chapter.ai_casting_status !== 'in_progress' && navigate(`/player/${chapter.id}`)}
                         style={{'--md-list-item-label-text-color': 'var(--md-sys-color-on-surface)'}}
                       >
                         <div slot="start" style={{ 
@@ -450,7 +453,37 @@ export default function TitleDetail() {
                           </div>
                         ) : (
                           <>
-                            <div slot="headline" style={{ fontWeight: 500 }}>{chapter.name || `Chapter ${chapter.order_index}`}</div>
+                            <div slot="headline" style={{ fontWeight: 500, display: 'flex', alignItems: 'center', flexWrap: 'wrap', gap: '0.5rem' }}>
+                              <span>{chapter.name || `Chapter ${chapter.order_index}`}</span>
+                              {chapter.ai_casting_status === 'in_progress' && (
+                                <span style={{ 
+                                  display: 'inline-flex', 
+                                  alignItems: 'center', 
+                                  gap: '6px', 
+                                  fontSize: '0.75rem', 
+                                  padding: '2px 10px', 
+                                  borderRadius: '12px', 
+                                  backgroundColor: 'var(--md-sys-color-tertiary-container)', 
+                                  color: 'var(--md-sys-color-on-tertiary-container)',
+                                  fontWeight: 500 
+                                }}>
+                                  <md-circular-progress indeterminate style={{ '--md-circular-progress-size': '14px' }}></md-circular-progress>
+                                  AI Casting in progress...
+                                </span>
+                              )}
+                              {chapter.ai_casting_status === 'failed' && (
+                                <span style={{ 
+                                  fontSize: '0.75rem', 
+                                  padding: '2px 8px', 
+                                  borderRadius: '12px', 
+                                  backgroundColor: 'var(--md-sys-color-error-container)', 
+                                  color: 'var(--md-sys-color-on-error-container)',
+                                  fontWeight: 500 
+                                }}>
+                                  AI Casting Failed (Standard Audio Ready)
+                                </span>
+                              )}
+                            </div>
                             <div slot="supporting-text">Added {chapter.created_at?.toDate ? chapter.created_at.toDate().toLocaleDateString() : (chapter.created_at ? new Date(chapter.created_at).toLocaleDateString() : 'Just now')}</div>
                           </>
                         )}
@@ -458,20 +491,30 @@ export default function TitleDetail() {
                         <div slot="end" style={{ display: 'flex', gap: '0.5rem', alignItems: 'center' }} onClick={(e) => e.stopPropagation()}>
                           {editingChapterId !== chapter.id && (
                             <>
-                              {chapter.is_ssml && (
-                                 <md-icon style={{ color: 'var(--md-sys-color-tertiary)', marginRight: '0.5rem' }} title="AI Casted"><span className="material-symbols-outlined">verified</span></md-icon>
+                              {chapter.ai_casting_status !== 'in_progress' && (
+                                <>
+                                  {chapter.is_ssml && (
+                                    <md-icon style={{ color: 'var(--md-sys-color-tertiary)', marginRight: '0.5rem' }} title="AI Casted"><span className="material-symbols-outlined">verified</span></md-icon>
+                                  )}
+                                  {renderDownloadButton(chapter)}
+                                  <md-icon-button onClick={() => { setEditingChapterId(chapter.id); setEditChapterName(chapter.name || `Chapter ${chapter.order_index}`); }}>
+                                    <md-icon><span className="material-symbols-outlined">edit</span></md-icon>
+                                  </md-icon-button>
+                                </>
                               )}
-                              {renderDownloadButton(chapter)}
-                              <md-icon-button onClick={() => { setEditingChapterId(chapter.id); setEditChapterName(chapter.name || `Chapter ${chapter.order_index}`); }}>
-                                <md-icon><span className="material-symbols-outlined">edit</span></md-icon>
-                              </md-icon-button>
                               <md-icon-button onClick={() => setDeleteChapterId(chapter.id)}>
                                 <md-icon><span className="material-symbols-outlined">delete</span></md-icon>
                               </md-icon-button>
                             </>
                           )}
-                          <md-icon-button onClick={() => navigate(`/player/${chapter.id}`)} title="Play chapter">
-                            <md-icon style={{ color: 'var(--md-sys-color-primary)' }}><span className="material-symbols-outlined">play_circle</span></md-icon>
+                          <md-icon-button 
+                            disabled={chapter.ai_casting_status === 'in_progress' || undefined} 
+                            onClick={() => chapter.ai_casting_status !== 'in_progress' && navigate(`/player/${chapter.id}`)} 
+                            title={chapter.ai_casting_status === 'in_progress' ? 'AI Casting in progress...' : 'Play chapter'}
+                          >
+                            <md-icon style={{ color: chapter.ai_casting_status === 'in_progress' ? 'var(--md-sys-color-outline)' : 'var(--md-sys-color-primary)' }}>
+                              <span className="material-symbols-outlined">play_circle</span>
+                            </md-icon>
                           </md-icon-button>
                         </div>
                       </md-list-item>
