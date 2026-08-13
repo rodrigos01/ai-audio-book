@@ -9,17 +9,15 @@ class AICastingService {
         this.genAI = new GoogleGenAI({ apiKey: apiKey });
 
         const systemInstruction = `
-            You are the "AI Casting Director" for a premium audiobook platform.
+            You are the "AI Director" for a premium audiobook platform.
             Your goal is to transform written text into a dramatic, multi-speaker audio experience.
             
             You work in two primary capacities:
             1. **Casting**: Identifying all characters and assigning them consistent, stylistically appropriate voices.
-            2. **SSML Generation**: Restructuring text for dramatic flow, stripping unnecessary attributions (like "he said"), and formatting with proper <voice> and <p> tags.
+            2. **Script Generation**: Restructuring text for dramatic flow.
             
             Core Principles:
             - **Consistency**: Always reuse existing character-to-voice mappings.
-            - **Drama**: Prioritize immersive performance over literal word-for-word transcription.
-            - **Structure**: Always use paragraph (<p>) tags as the primary container for text.
         `;
 
         this.modelConfig = {
@@ -67,8 +65,8 @@ class AICastingService {
             3. For characters in the "Current Title Cast", you MUST reuse their assigned voice ID.
             4. For new characters, assign a voice from the "Available Voices" that matches their characteristics, personality, and gender.
                 - DO NOT assign the same voice to multiple characters.
-            5. For each character and the Narrator, provide a succinct description of how they should sound (e.g. "Inquisitive, articulate host with warm tone", "Calm, steady storyteller with gentle warmth") in the "personality" and "narrator_personality" fields.
-            6. Assign a Narrator voice. ${existingNarrator ? `You MUST reuse the existing narrator voice (${existingNarrator}).` : 'ONLY if the content is NOT a first person narrative, select a voice from the "Available Voices". Otherwise, use the same voice as the main character.'}
+            5. Assign a Narrator voice, if one was not assigned yet. If the text is a first-person narrative, use the same voice as the main character.
+            7. For each character and the Narrator, provide a succinct description of how they should sound (e.g. "Inquisitive, articulate host with warm tone", "Calm, steady storyteller with gentle warmth") in the "personality" and "narrator_personality" fields. If a character is described as having a specific accent, or as coming from a specific region, include that in the personality description. If the narrator is the main charachter, they should have identical personalities.
 
             ### Chapter Text:
             ${chapterText}
@@ -131,22 +129,17 @@ class AICastingService {
 
         if (tier === 'pro') {
             const proPrompt = `
-                ### Task: Phase 2 - Natural Language Multi-Speaker Script & Performance Prompt Generation
-                Using the provided casting map, analyze the chapter text and perform two tasks:
-                1. Rewrite the chapter text into a natural language multi-speaker script optimized for Gemini TTS.
-                2. Generate a concise, tailored natural language performance prompt (1-2 sentences) describing the ideal vocal style, tone, pace, and genre performance for this specific chapter (e.g. "Synthesize the text as an engaging, warm podcast conversation with natural pacing and reflective tone." or "Synthesize the text as a tense, dramatic thriller with quiet intensity").
+                ### Task: Phase 2 - Natural Language Multi-Speaker Script
+                Using the provided casting map, rewrite the chapter text into a Gemini-TTS-optimised multi-speaker script. Make sure the entire text is included in the output.
 
                 ### Casting Map to Use:
                 ${JSON.stringify(updatedCast, null, 2)}
 
                 ### Instructions:
-                1. Format every speaker turn on a NEW line starting with "SpeakerAlias: Dialogue".
-                2. SpeakerAlias MUST use EXACTLY the character name key from the provided "Casting Map to Use" (e.g. if the casting map key is "Desmond", use "Desmond:"; if "Nora", use "Nora:"; for narration, use "Narrator:"). Do not invent alias variations or use full names if the casting map specifies simple names.
-                3. SpeakerAlias MUST consist solely of alphanumeric characters without spaces (e.g. use "Narrator" for narration, "Alice" for Alice, "Bob" for Bob).
-                4. DO NOT wrap dialogue turns in double quotes or escaped quotes (e.g. write 'Farmer: [bowing respectfully] Madonna Contessa' instead of 'Farmer: "[bowing respectfully] Madonna Contessa"').
-                5. Add natural language vocal and emotional cues inside brackets within turns (e.g. "[whispering]", "[excitedly]", "[sighs]", "[softly]", "[pause]") to instruct tone, emotion, and rhythm for performance.
-                6. Strip mechanical dialogue attributions (e.g. "she whispered") when translated into natural vocal performance cues ("[whispering]").
-                7. DO NOT use any SSML or XML tags (<speak>, <voice>, <p>, etc.). Output strictly natural multi-speaker script text.
+                1. Format every speaker turn on a NEW line starting with "SpeakerAlias: Dialogue". The narrator is also a speaker, so narration should be formatted as "Narrator: Dialogue".
+                2. Use the character names from the casting map as the SpeakerAlias.
+                3. Strip short dialogue attributions ("[pronoun] said.") ONLY IF they don't add visual or explanatory context to the scene.
+                4. Add acting queues in parentheses for any non-verbal sounds, actions, or emotions that should be conveyed in the audio performance (e.g. "(sighs)", "(laughs)", "(angrily)").
 
                 ### Chapter Text:
                 ${chapterText}

@@ -134,7 +134,7 @@ export const api = {
     return url;
   },
   getHlsPlaylistUrl: (chapterId, token = null) => {
-    let url = `${API_BASE}/chapters/${chapterId}/hls`;
+    let url = `${API_BASE}/chapters/${chapterId}/hls/playlist.m3u8`;
     const params = [];
     if (token) params.push(`token=${encodeURIComponent(token)}`);
     const localCid = getLocalClientId();
