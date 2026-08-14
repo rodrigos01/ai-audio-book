@@ -202,7 +202,11 @@ function getServiceUrl(serviceName) {
   ], { encoding: 'utf-8' }).trim();
 }
 
-function deployBackend(rootDir, config, backendService) {
+// Split out from deployBackend so the GitHub Actions path (which builds via
+// Docker Buildx directly on the runner, not Kaniko/Cloud Build -- see
+// .github/workflows/deploy.yml) can reuse the exact same deploy flags
+// without duplicating them.
+function deployBackendImage(backendService, imageTag, config) {
   const envVars = [
     'STORAGE_BASE_PATH=/app/storage',
     // Overrides the Dockerfile's baked-in GOOGLE_APPLICATION_CREDENTIALS path
@@ -215,14 +219,6 @@ function deployBackend(rootDir, config, backendService) {
     `GOOGLE_CLOUD_PROJECT=${PROJECT}`,
     `GEMINI_API_KEY=${config.GEMINI_API_KEY || ''}`
   ].join(',');
-
-  const stageDir = stageSourceDir(rootDir, 'backend');
-  let imageTag;
-  try {
-    imageTag = buildAndPushImage(stageDir, backendService);
-  } finally {
-    fs.rmSync(stageDir, { recursive: true, force: true });
-  }
 
   runGcloud([
     'run', 'deploy', backendService,
@@ -241,8 +237,20 @@ function deployBackend(rootDir, config, backendService) {
   return getServiceUrl(backendService);
 }
 
-function deployFrontend(rootDir, config, frontendService, backendUrl) {
-  const buildVars = {
+function deployBackend(rootDir, config, backendService) {
+  const stageDir = stageSourceDir(rootDir, 'backend');
+  let imageTag;
+  try {
+    imageTag = buildAndPushImage(stageDir, backendService);
+  } finally {
+    fs.rmSync(stageDir, { recursive: true, force: true });
+  }
+
+  return deployBackendImage(backendService, imageTag, config);
+}
+
+function getFrontendBuildVars(config, backendUrl) {
+  return {
     VITE_FIREBASE_API_KEY: config.VITE_FIREBASE_API_KEY || '',
     VITE_FIREBASE_AUTH_DOMAIN: config.VITE_FIREBASE_AUTH_DOMAIN || '',
     VITE_FIREBASE_PROJECT_ID: config.VITE_FIREBASE_PROJECT_ID || '',
@@ -252,15 +260,10 @@ function deployFrontend(rootDir, config, frontendService, backendUrl) {
     VITE_GOOGLE_CLIENT_ID: config.VITE_GOOGLE_CLIENT_ID || '',
     VITE_API_BASE_URL: `${backendUrl}/api`
   };
+}
 
-  const stageDir = stageFrontendSourceDir(rootDir, buildVars);
-  let imageTag;
-  try {
-    imageTag = buildAndPushImage(stageDir, frontendService);
-  } finally {
-    fs.rmSync(stageDir, { recursive: true, force: true });
-  }
-
+// Split out from deployFrontend for the same reason as deployBackendImage.
+function deployFrontendImage(frontendService, imageTag) {
   runGcloud([
     'run', 'deploy', frontendService,
     '--image', imageTag,
@@ -271,6 +274,20 @@ function deployFrontend(rootDir, config, frontendService, backendUrl) {
   ], `Deploying frontend (${frontendService})`);
 
   return getServiceUrl(frontendService);
+}
+
+function deployFrontend(rootDir, config, frontendService, backendUrl) {
+  const buildVars = getFrontendBuildVars(config, backendUrl);
+
+  const stageDir = stageFrontendSourceDir(rootDir, buildVars);
+  let imageTag;
+  try {
+    imageTag = buildAndPushImage(stageDir, frontendService);
+  } finally {
+    fs.rmSync(stageDir, { recursive: true, force: true });
+  }
+
+  return deployFrontendImage(frontendService, imageTag);
 }
 
 function updateBackendCors(backendService, frontendUrl) {
@@ -291,5 +308,14 @@ module.exports = {
   deployBackend,
   deployFrontend,
   updateBackendCors,
-  getServiceUrl
+  getServiceUrl,
+  // Exposed for the GitHub Actions path (.github/workflows/deploy.yml +
+  // scripts/actions-deploy.js), which builds via Docker Buildx directly on
+  // the runner instead of Kaniko/Cloud Build, but reuses everything else.
+  stageSourceDir,
+  stageFrontendSourceDir,
+  getFrontendBuildVars,
+  getImageTag,
+  deployBackendImage,
+  deployFrontendImage
 };

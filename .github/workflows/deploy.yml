@@ -6,6 +6,14 @@ name: Deploy to Cloud Run
 # under direct control of whichever Claude Code agent is iterating on it,
 # deployed interactively via `npm run deploy-source`.
 #
+# Builds are done directly on the runner with Docker Buildx + its native
+# GitHub Actions cache backend, rather than shelling out to Kaniko/Cloud
+# Build like the interactive deploy-source scripts do -- GitHub-hosted
+# runners have a real Docker daemon (the interactive scripts don't, which is
+# why they need Kaniko in the first place), so there's no Cloud Build
+# provisioning latency, no Kaniko executor image pull, and no GCS
+# source-upload round trip. See scripts/actions-deploy.js.
+#
 # Requires the corresponding Cloud Build trigger ("ai-audio-book-deploy",
 # push to master) to be disabled in the console so both don't fire on the
 # same push -- see CLAUDE.md.
@@ -47,8 +55,44 @@ jobs:
 
       - uses: google-github-actions/setup-gcloud@v2
 
+      - run: gcloud auth configure-docker us-central1-docker.pkg.dev --quiet
+
+      - uses: docker/setup-buildx-action@v3
+
       - uses: actions/setup-node@v4
         with:
           node-version: 20
 
-      - run: npm run deploy-source
+      # --- Backend ---
+
+      - id: stage-backend
+        run: node scripts/actions-deploy.js stage-backend
+
+      - uses: docker/build-push-action@v6
+        with:
+          context: ${{ steps.stage-backend.outputs.dir }}
+          push: true
+          tags: ${{ steps.stage-backend.outputs.image }}
+          cache-from: type=gha,scope=backend
+          cache-to: type=gha,mode=max,scope=backend
+
+      - id: deploy-backend
+        run: node scripts/actions-deploy.js deploy-backend "${{ steps.stage-backend.outputs.service }}" "${{ steps.stage-backend.outputs.image }}"
+
+      # --- Frontend (needs the backend URL to bake in as VITE_API_BASE_URL) ---
+
+      - id: stage-frontend
+        run: node scripts/actions-deploy.js stage-frontend "${{ steps.deploy-backend.outputs.url }}"
+
+      - uses: docker/build-push-action@v6
+        with:
+          context: ${{ steps.stage-frontend.outputs.dir }}
+          push: true
+          tags: ${{ steps.stage-frontend.outputs.image }}
+          cache-from: type=gha,scope=frontend
+          cache-to: type=gha,mode=max,scope=frontend
+
+      - id: deploy-frontend
+        run: node scripts/actions-deploy.js deploy-frontend "${{ steps.stage-frontend.outputs.service }}" "${{ steps.stage-frontend.outputs.image }}"
+
+      - run: node scripts/actions-deploy.js cors "${{ steps.stage-backend.outputs.service }}" "${{ steps.deploy-frontend.outputs.url }}"
