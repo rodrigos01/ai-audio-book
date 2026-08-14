@@ -74,7 +74,9 @@ class AICastingService {
             3. For characters in the "Current Title Cast", you MUST reuse their assigned voice ID and personality.
             4. For new characters, assign a voice from the "Available Voices" that matches their characteristics, personality, and gender.
             5. Assign a Narrator voice, if one was not assigned yet. If the text is a first-person narrative, use the same voice as the main character.
-            7. For each character and the Narrator, provide a succinct description of how they should sound (e.g. "Inquisitive, articulate host with warm tone", "Calm, steady storyteller with gentle warmth") in the "personality" and "narrator_personality" fields. If a character is described as having a specific accent, or as coming from a specific region, you must include it in the personality description. If the narrator is the main character, they should have identical personalities.
+            7. For each character and the Narrator, provide a succinct description of how they should sound (e.g. "Inquisitive, articulate host with warm tone", "Calm, steady storyteller with gentle warmth") in the "personality" and "narrator_personality" fields. 
+            8. If a character is described as having a specific accent, or as coming from a specific country or region, you must include it in the personality description. 
+            9. If the narrator is the main character, they should have identical personalities.
 
             ### Chapter Text:
             ${chapterText}
@@ -139,7 +141,7 @@ class AICastingService {
                 ### Task: Phase 2 - Natural Language Multi-Speaker Script
                 Using the provided casting map, rewrite the chapter text into a Gemini-TTS-optimised multi-speaker script. Make sure the entire text is included in the output.
 
-                ### Casting Map to Use:
+                ### Casting Map to Use, in the format "Character Name": "Voice ID":
                 ${JSON.stringify(updatedCast, null, 2)}
 
                 ### Instructions:
