@@ -71,7 +71,18 @@ The `.claude/hooks/session-start.sh` SessionStart hook (see below) installs `gcl
 - `player@ai-audio-book.iam.gserviceaccount.com` grants `roles/iam.workloadIdentityUser` only to the principal set for that same repo, as a second, independent layer of scoping.
 - `claude-develop` is deliberately **not** wired into this workflow — that pair stays under direct agent control (`npm run deploy-source` from an interactive Claude Code session), not CI, so this trust relationship never needs to cover more than `master`.
 
-Requires one manually-added secret, `GEMINI_API_KEY` (Settings → Secrets and variables → Actions) — everything else the workflow needs (Firebase web config, Google OAuth client ID) isn't actually sensitive (it's already public in the deployed frontend bundle) and is inlined directly in the workflow file instead.
+Requires these manually-added secrets (Settings → Secrets and variables → Actions) — nothing is inlined in the workflow file itself, even the Firebase/OAuth values that aren't strictly sensitive (they're already public in the deployed frontend bundle, but not committed to the repo regardless):
+```
+GEMINI_API_KEY
+VITE_FIREBASE_API_KEY
+VITE_FIREBASE_AUTH_DOMAIN
+VITE_FIREBASE_PROJECT_ID
+VITE_FIREBASE_STORAGE_BUCKET
+VITE_FIREBASE_MESSAGING_SENDER_ID
+VITE_FIREBASE_APP_ID
+VITE_GOOGLE_CLIENT_ID
+```
+Values match the existing `ai-audio-book-deploy` Cloud Build trigger's substitutions (`gcloud builds triggers describe <id>` to see them, or the Firebase/Google Cloud consoles).
 
 This coexists with the `ai-audio-book-deploy` Cloud Build trigger (push to `master`, see above) unless that trigger is disabled in the Cloud Build console — leaving both enabled means every push to `master` deploys twice, redundantly but not conflictingly (same target services, same result). The `ai-audio-book-deploy-claude-develop` trigger (push to `claude-develop`) is unrelated to this workflow and can stay as-is either way.
 
