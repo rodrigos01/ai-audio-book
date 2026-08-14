@@ -223,9 +223,14 @@ export default function Player() {
     };
   }, []);
 
+  // Attaches native <audio> listeners and (for online playback) the HLS
+  // source, all in one effect so listeners always target whichever DOM
+  // node is currently live — a separate listener effect keyed only on
+  // `chapter` would keep pointing at a stale/detached node whenever this
+  // effect's own deps (e.g. authToken) changed without `chapter` changing.
   useEffect(() => {
     const audio = audioRef.current;
-    if (!audio) return;
+    if (!chapter || loading || !audio) return;
 
     const onPlay = () => setIsPlaying(true);
     const onPause = () => setIsPlaying(false);
@@ -239,6 +244,11 @@ export default function Player() {
       setIsPlaying(false);
     };
     const onError = () => {
+      // hls.js's own teardown (see cleanup below) clears the element's src
+      // and calls load(), which fires a native 'error' event with
+      // MediaError code 4 (SRC_NOT_SUPPORTED) even though nothing actually
+      // failed. Real failures always leave audio.src pointing at a URL.
+      if (!audio.error || !audio.src) return;
       console.error('Audio element error:', audio.error);
       setIsBuffering(false);
     };
@@ -252,6 +262,39 @@ export default function Player() {
     audio.addEventListener('ended', onEnded);
     audio.addEventListener('error', onError);
 
+    let hls = null;
+    if (!isOfflinePlayback) {
+      const hlsUrl = api.getHlsPlaylistUrl(chapterId, authToken);
+
+      if (audio.canPlayType('application/vnd.apple.mpegurl')) {
+        audio.src = hlsUrl;
+      } else if (Hls.isSupported()) {
+        hls = new Hls({
+          enableWorker: true,
+          lowLatencyMode: false
+        });
+        hls.on(Hls.Events.ERROR, (_event, data) => {
+          if (!data.fatal) return;
+          console.error('HLS.js error:', data.type, data.details);
+          switch (data.type) {
+            case Hls.ErrorTypes.NETWORK_ERROR:
+              hls.startLoad();
+              break;
+            case Hls.ErrorTypes.MEDIA_ERROR:
+              hls.recoverMediaError();
+              break;
+            default:
+              hls.destroy();
+              audio.src = api.getStreamUrl(chapterId, 0, authToken);
+          }
+        });
+        hls.loadSource(hlsUrl);
+        hls.attachMedia(audio);
+      } else {
+        audio.src = api.getStreamUrl(chapterId, 0, authToken);
+      }
+    }
+
     return () => {
       audio.removeEventListener('play', onPlay);
       audio.removeEventListener('pause', onPause);
@@ -261,31 +304,6 @@ export default function Player() {
       audio.removeEventListener('playing', onPlaying);
       audio.removeEventListener('ended', onEnded);
       audio.removeEventListener('error', onError);
-    };
-  }, [chapter]);
-
-  // HLS stream attach effect
-  useEffect(() => {
-    if (!chapter || loading || isOfflinePlayback || !audioRef.current) return;
-
-    const audio = audioRef.current;
-    const hlsUrl = api.getHlsPlaylistUrl(chapterId, authToken);
-    let hls = null;
-
-    if (audio.canPlayType('application/vnd.apple.mpegurl')) {
-      audio.src = hlsUrl;
-    } else if (Hls.isSupported()) {
-      hls = new Hls({
-        enableWorker: true,
-        lowLatencyMode: false
-      });
-      hls.loadSource(hlsUrl);
-      hls.attachMedia(audio);
-    } else {
-      audio.src = api.getStreamUrl(chapterId, 0, authToken);
-    }
-
-    return () => {
       if (hls) {
         hls.destroy();
       }
@@ -535,7 +553,7 @@ export default function Player() {
         {chapter && !loading && !isOfflinePlayback && (
           <audio
             ref={audioRef}
-            key={`hls-${chapterId}-${authToken}`}
+            key={`hls-${chapterId}`}
             autoPlay
             preload="auto"
             style={{ display: 'none' }}
