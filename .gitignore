@@ -16,6 +16,7 @@ Thumbs.db
 !package.json
 !package-lock.json
 !firebase.json
+!.claude/settings.json
 
 # Large Assets/Generated Files
 audio_files/
