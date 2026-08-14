@@ -39,6 +39,57 @@ These scripts (`scripts/deploy.js`, `backend/scripts/deploy.js`, `frontend/scrip
 
 Cloud Build service naming: all three `cloudbuild.yaml` files (root, `backend/`, `frontend/`) prefix the deployed Cloud Run **services** (`ai-audio-book-api`, `ai-audio-book`) with `<branch>-` using Cloud Build's built-in `$BRANCH_NAME` substitution, except on `master` which deploys unprefixed. The `ai-audio-book-generate-samples` Cloud Run **job** is intentionally exempt and always deploys under that fixed name.
 
+#### Alternate: `deploy-source` scripts (no `cloudbuild.yaml`, with layer caching)
+
+For a quick scoped deploy of the current branch (e.g. to get a live URL for a sandboxed/cloud session that can't otherwise expose a local server), use the `deploy-source` scripts instead:
+```bash
+npm run deploy-source            # both, sequential (backend first, frontend picks up its URL)
+npm run deploy-source-backend    # backend only
+npm run deploy-source-frontend   # frontend only (requires the backend service to already exist)
+
+# Optional positional args override the service name(s) instead of the default:
+npm run deploy-source-backend -- my-service-name
+npm run deploy-source-frontend -- my-frontend-name my-backend-name
+npm run deploy-source -- my-backend-name my-frontend-name
+```
+These (`scripts/deploy-source.js` / `backend/scripts/deploy-source.js` / `frontend/scripts/deploy-source.cjs`, sharing `scripts/deploy-source-helper.js`) build via `gcloud builds submit` with a generated Kaniko config and deploy the resulting image with `gcloud run deploy --image`, instead of `gcloud builds submit --config=cloudbuild.yaml` or plain `gcloud run deploy --source`. Notable differences from the `cloudbuild.yaml` path above:
+- **Layers are cached in Artifact Registry via Kaniko (`--cache=true`, 14-day TTL)**, specifically to make `RUN npm install` (and, for the frontend, `RUN npm run build`) skip real work on a repeat deploy with unchanged deps/source. Plain `gcloud run deploy --source` always passes `--no-cache` to the underlying `docker build` (verified against the actual Cloud Build step it generates), and each Cloud Build run is on a fresh ephemeral VM regardless, so there's nothing to reuse without an explicit registry-backed cache like this. Verified end to end: a repeat frontend deploy with no changes shows `Found cached layer, extracting to filesystem` in the Cloud Build log for both `RUN npm install` and `RUN npm run build`, cutting the Kaniko build step from ~1m46s to ~1m6s (most of the remainder is the Kaniko executor image pull and Cloud Build/Cloud Run overhead, not dependency work).
+- **Service names default to `claude-develop-ai-audio-book(-api)` in Claude Code cloud sessions** (detected via `CLAUDE_CODE_REMOTE=true`) — a fixed, persistent pair of services, so repeated agent runs across disposable session containers redeploy the same known URL instead of each minting a new one that needs manual teardown. Outside a Claude Code cloud session, the default falls back to a branch-prefixed name (see below). Pass an explicit service name as a CLI arg (see usage above) to override either default — `resolveServiceName` in `scripts/deploy-source-helper.js` is the single place this logic lives.
+- **Branch prefix (the non-Claude-env default) is computed from `git rev-parse --abbrev-ref HEAD`**, not Cloud Build's `$BRANCH_NAME` substitution — that substitution is only populated for builds triggered from a connected repo and is empty for a manual submit/deploy, which is what these scripts do (`master` still deploys unprefixed).
+- **Requires `backend/Dockerfile.source` and `frontend/Dockerfile.source`**, not `backend/Dockerfile` / `frontend/Dockerfile`. Those Dockerfiles assume a repo-root build context (`COPY backend/...`) because that's how `cloudbuild.yaml` invokes `docker build -f backend/Dockerfile .`; a directory passed as Kaniko's build context can't decouple a Dockerfile's location from its build context either, so the helper stages a clean copy of `backend/`/`frontend/` (skipping `node_modules`, `.env`, credential JSON) with the self-contained `Dockerfile.source` copied in as `Dockerfile`.
+- **Frontend build args are baked into `Dockerfile.source`'s `ARG NAME=value` defaults at stage time**, not passed via `--build-arg`/`--set-build-env-vars` — `gcloud run deploy --source` does not pass `--set-build-env-vars` through to `docker build --build-arg` for Dockerfile-based builds (verified against the actual Cloud Build step it generates: no `--build-arg` flags appear). Kept this approach after switching to Kaniko rather than reaching for Kaniko's own `--build-arg` flag, since it works the same way regardless of build mechanism and was already verified working.
+- **Runs the backend as `player@ai-audio-book.iam.gserviceaccount.com` directly** (`--service-account`, with `GOOGLE_APPLICATION_CREDENTIALS` explicitly cleared) instead of baking a downloaded key file into the image, so it needs no GCS secrets bucket.
+- If a sandbox sets a placeholder `CLOUDSDK_AUTH_ACCESS_TOKEN` for its own proxied Google API calls (seen in Claude Code cloud sessions), `gcloud` prefers that over an activated service account and deploys fail with `UNAUTHENTICATED`; `deploy-source-helper.js` clears that env var for its own `gcloud` calls, but ad-hoc `gcloud` commands still need `env -u CLOUDSDK_AUTH_ACCESS_TOKEN`.
+
+The `.claude/hooks/session-start.sh` SessionStart hook (see below) installs `gcloud` automatically in remote/cloud sessions, so these scripts work there without setup.
+
+#### CI: GitHub Actions for production, agents for `claude-develop`
+
+`.github/workflows/deploy.yml` deploys production on every push to `master`. It authenticates to GCP via **Workload Identity Federation** — no stored key. The trust chain, scoped as tightly as WIF allows:
+- Pool: `github-actions-pool`, provider: `github-actions-provider` (both in the `ai-audio-book` project, `global` location).
+- The provider's `--attribute-condition` only accepts OIDC tokens where `assertion.repository == 'rodrigos01/ai-audio-book' && assertion.ref == 'refs/heads/master'` — tokens from any other repo, or from any other branch/PR *within* this repo, are rejected before IAM is even consulted.
+- `player@ai-audio-book.iam.gserviceaccount.com` grants `roles/iam.workloadIdentityUser` only to the principal set for that same repo, as a second, independent layer of scoping.
+- `claude-develop` is deliberately **not** wired into this workflow — that pair stays under direct agent control (`npm run deploy-source` from an interactive Claude Code session), not CI, so this trust relationship never needs to cover more than `master`.
+
+Unlike `deploy-source`, this workflow does **not** build via Kaniko/Cloud Build — GitHub-hosted runners have a real Docker daemon (the interactive scripts don't, which is why they need Kaniko at all), so it builds directly with `docker/build-push-action` + `docker/setup-buildx-action`, using Buildx's native GitHub Actions cache backend (`cache-to: type=gha,mode=max` / `cache-from: type=gha`, one cache `scope` per service) instead of Kaniko's registry-based cache. This skips the Cloud Build provisioning latency, the Kaniko executor image pull, and the GCS source-upload round trip that `deploy-source` pays on every run. `scripts/actions-deploy.js` (CLI, called from workflow steps via `node scripts/actions-deploy.js <command>`, writing results to `$GITHUB_OUTPUT`) handles everything around that build step — staging the Dockerfile context and deploying an already-built image — by re-exporting the relevant pieces of `scripts/deploy-source-helper.js` (`stageSourceDir`, `stageFrontendSourceDir`, `deployBackendImage`, `deployFrontendImage`, etc.), so service naming, staging, and the actual `gcloud run deploy` flags stay identical between both paths and only the build mechanism differs.
+
+Requires these manually-added secrets (Settings → Secrets and variables → Actions) — nothing is inlined in the workflow file itself, even the Firebase/OAuth values that aren't strictly sensitive (they're already public in the deployed frontend bundle, but not committed to the repo regardless):
+```
+GEMINI_API_KEY
+VITE_FIREBASE_API_KEY
+VITE_FIREBASE_AUTH_DOMAIN
+VITE_FIREBASE_PROJECT_ID
+VITE_FIREBASE_STORAGE_BUCKET
+VITE_FIREBASE_MESSAGING_SENDER_ID
+VITE_FIREBASE_APP_ID
+VITE_GOOGLE_CLIENT_ID
+```
+Values match the existing `ai-audio-book-deploy` Cloud Build trigger's substitutions (`gcloud builds triggers describe <id>` to see them, or the Firebase/Google Cloud consoles).
+
+This coexists with the `ai-audio-book-deploy` Cloud Build trigger (push to `master`, see above) unless that trigger is disabled in the Cloud Build console — leaving both enabled means every push to `master` deploys twice, redundantly but not conflictingly (same target services, same result). The `ai-audio-book-deploy-claude-develop` trigger (push to `claude-develop`) is unrelated to this workflow and can stay as-is either way.
+
+`getBranchServicePrefix()` in `scripts/deploy-source-helper.js` checks `GITHUB_REF_NAME` before falling back to `git rev-parse --abbrev-ref HEAD` — required because `actions/checkout` leaves the repo in a detached-HEAD state, where that git command returns the literal string `"HEAD"` instead of the branch name.
+
 ## Architecture
 
 **Monorepo, two independently deployed services**, wired together only through HTTP:
@@ -66,6 +117,8 @@ Small React Router app: `App.jsx` defines routes `/` (`pages/Home.jsx`), `/title
 ## Environment
 
 Backend needs a `backend/.env` with `GEMINI_API_KEY` and `GOOGLE_APPLICATION_CREDENTIALS` (path to the GCP service account JSON). Frontend needs a `frontend/.env` with `VITE_FIREBASE_API_KEY`, `VITE_FIREBASE_AUTH_DOMAIN`, `VITE_FIREBASE_PROJECT_ID`, `VITE_FIREBASE_STORAGE_BUCKET`, `VITE_FIREBASE_MESSAGING_SENDER_ID`, `VITE_FIREBASE_APP_ID`. Neither file nor `*.json` credential files are committed (see `.gitignore`).
+
+In Claude Code cloud sessions, `.claude/hooks/session-start.sh` (a `SessionStart` hook, registered in `.claude/settings.json`) handles this automatically: it decodes a `GOOGLE_APPLICATION_CREDENTIALS_BASE64` environment variable (set in the cloud environment's settings) into `~/credentials/service-account.json`, writes `GOOGLE_APPLICATION_CREDENTIALS` into both `$CLAUDE_ENV_FILE` and `backend/.env`, and installs+authenticates `gcloud`. This has to be a session-start hook rather than the environment's own setup script — `GOOGLE_APPLICATION_CREDENTIALS_BASE64` (and any other cloud-environment env var) is only ever injected into the `claude` process's own environment, never into the container entrypoint, `environment-manager`, or anything a setup script runs, since a setup script runs earlier in boot, before that process exists.
 
 ## Verification
 

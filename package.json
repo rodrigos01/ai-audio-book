@@ -11,7 +11,10 @@
     "deploy": "node scripts/deploy.js",
     "deploy-backend": "node backend/scripts/deploy.js",
     "deploy-frontend": "node frontend/scripts/deploy.js",
-    "deploy:parallel": "concurrently -n \"BACKEND,FRONTEND\" -c \"blue,green\" \"npm run deploy-backend\" \"npm run deploy-frontend\""
+    "deploy:parallel": "concurrently -n \"BACKEND,FRONTEND\" -c \"blue,green\" \"npm run deploy-backend\" \"npm run deploy-frontend\"",
+    "deploy-source": "node scripts/deploy-source.js",
+    "deploy-source-backend": "node backend/scripts/deploy-source.js",
+    "deploy-source-frontend": "node frontend/scripts/deploy-source.cjs"
   },
   "dependencies": {
     "@google/genai": "^1.50.1",
