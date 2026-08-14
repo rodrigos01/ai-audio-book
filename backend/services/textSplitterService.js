@@ -62,107 +62,54 @@ function splitSSMLIntoSections(ssml) {
   return validSections;
 }
 
-function extractSpeakerTurns(scriptText) {
+function splitMultiSpeakerIntoSections(scriptText, maxBytes = 4000, maxSpeakers = 2) {
   if (!scriptText) return [];
-  let clean = scriptText.replace(/\\n/g, '\n').replace(/\\"/g, '"').replace(/```[a-z]*\s*/gi, '').replace(/```/gi, '').trim();
-  clean = clean.replace(/^"+|"+$/g, '').trim();
 
-  const normalized = clean.replace(/([^\n])\b([a-zA-Z0-9]+:)/g, '$1\n$2');
-  const rawLines = normalized.split(/\r?\n/).map(l => l.trim()).filter(l => l.length > 0);
+  const cleanText = scriptText.replace(/```[a-z]*\s*/gi, '').replace(/```/gi, '').trim();
+  const rawLines = cleanText.split(/\r?\n/).map(l => l.trim()).filter(Boolean);
 
   const turns = [];
   for (const line of rawLines) {
-    const match = line.match(/^([a-zA-Z0-9]+):\s*(.*)/);
-    if (match) {
-      let dialogue = match[2].trim().replace(/^["']+|["']+$/g, '').trim();
-      turns.push({
-        alias: match[1],
-        text: dialogue,
-        fullTurn: `${match[1]}: ${dialogue}`
-      });
+    const match = line.match(/^([a-zA-Z0-9_ -]{1,40}):\s*(.*)$/);
+    const speaker = match ? match[1].trim() : 'Narrator';
+    const dialogue = match ? match[2].trim() : line;
+    const fullLine = `${speaker}: ${dialogue}`;
+
+    if (Buffer.byteLength(fullLine, 'utf8') > maxBytes) {
+      const chunks = splitTextBySentences(dialogue, `${speaker}: `, maxBytes);
+      for (const chunk of chunks) {
+        turns.push({ speaker, fullLine: chunk });
+      }
     } else {
-      turns.push({
-        alias: 'Narrator',
-        text: line,
-        fullTurn: line.startsWith('Narrator:') ? line : `Narrator: ${line}`
-      });
+      turns.push({ speaker, fullLine });
     }
   }
-  return turns;
-}
 
-function splitMultiSpeakerIntoSections(scriptText, maxBytes = 600, maxSpeakers = 2) {
-  if (!scriptText) return [];
-  const turns = extractSpeakerTurns(scriptText);
   const sections = [];
-
-  let currentGroup = [];
+  let currentLines = [];
   let currentSpeakers = new Set();
-  let currentLength = 0;
+  let currentBytes = 0;
 
   for (const turn of turns) {
-    const turnLen = Buffer.byteLength(turn.fullTurn, 'utf8');
+    const turnBytes = Buffer.byteLength(turn.fullLine, 'utf8');
+    const willExceedSpeakers = !currentSpeakers.has(turn.speaker) && currentSpeakers.size >= maxSpeakers;
+    const separatorBytes = currentLines.length > 0 ? 1 : 0;
+    const willExceedBytes = currentBytes + separatorBytes + turnBytes > maxBytes;
 
-    if (turnLen <= maxBytes) {
-      const nextSpeakers = new Set(currentSpeakers);
-      nextSpeakers.add(turn.alias);
-
-      const exceedsSpeakers = nextSpeakers.size > maxSpeakers;
-      const exceedsBytes = currentLength + turnLen + 1 > maxBytes;
-
-      if ((exceedsSpeakers || exceedsBytes) && currentGroup.length > 0) {
-        sections.push(currentGroup.join('\n'));
-        currentGroup = [turn.fullTurn];
-        currentSpeakers = new Set([turn.alias]);
-        currentLength = turnLen;
-      } else {
-        currentGroup.push(turn.fullTurn);
-        currentSpeakers.add(turn.alias);
-        currentLength += (currentLength ? 1 : 0) + turnLen;
-      }
+    if ((willExceedSpeakers || willExceedBytes) && currentLines.length > 0) {
+      sections.push(currentLines.join('\n'));
+      currentLines = [turn.fullLine];
+      currentSpeakers = new Set([turn.speaker]);
+      currentBytes = turnBytes;
     } else {
-      const sentences = turn.text.split(/(?<=[.!?])\s+/);
-      const prefix = `${turn.alias}: `;
-      let currentSub = '';
-
-      for (const s of sentences) {
-        const candidate = currentSub ? `${currentSub} ${s}` : s;
-        if (Buffer.byteLength(`${prefix}${candidate}`, 'utf8') > maxBytes && currentSub.length > 0) {
-          const chunk = `${prefix}${currentSub.trim()}`;
-          if (currentGroup.length > 0) {
-            sections.push(currentGroup.join('\n'));
-            currentGroup = [];
-            currentSpeakers = new Set();
-            currentLength = 0;
-          }
-          sections.push(chunk);
-          currentSub = s;
-        } else {
-          currentSub = candidate;
-        }
-      }
-      if (currentSub) {
-        const chunk = `${prefix}${currentSub.trim()}`;
-        const chunkLen = Buffer.byteLength(chunk, 'utf8');
-        const nextSpeakers = new Set(currentSpeakers);
-        nextSpeakers.add(turn.alias);
-
-        if ((nextSpeakers.size > maxSpeakers || currentLength + chunkLen + 1 > maxBytes) && currentGroup.length > 0) {
-          sections.push(currentGroup.join('\n'));
-          currentGroup = [chunk];
-          currentSpeakers = new Set([turn.alias]);
-          currentLength = chunkLen;
-        } else {
-          currentGroup.push(chunk);
-          currentSpeakers.add(turn.alias);
-          currentLength += (currentLength ? 1 : 0) + chunkLen;
-        }
-      }
+      currentLines.push(turn.fullLine);
+      currentSpeakers.add(turn.speaker);
+      currentBytes += separatorBytes + turnBytes;
     }
   }
 
-  if (currentGroup.length > 0) {
-    sections.push(currentGroup.join('\n'));
+  if (currentLines.length > 0) {
+    sections.push(currentLines.join('\n'));
   }
 
   return sections;
