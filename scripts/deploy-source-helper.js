@@ -139,6 +139,51 @@ function stageFrontendSourceDir(rootDir, buildVars) {
   return stageDir;
 }
 
+// `gcloud run deploy --source` always passes --no-cache to the underlying
+// `docker build` (verified against the actual Cloud Build step it
+// generates), and each Cloud Build run happens on a fresh, ephemeral VM
+// anyway -- so even without --no-cache there'd be nothing to reuse across
+// separate deploys. That makes `RUN npm install` re-run from scratch on
+// every single deploy regardless of whether package.json changed, which is
+// the slow part.
+//
+// Build+push via Kaniko instead, with its registry-based layer cache
+// (--cache=true): Kaniko stores each layer's digest in the destination
+// registry and reuses it on a later build if the layer's inputs (preceding
+// Dockerfile instructions + their context) are unchanged, so an unchanged
+// `COPY package*.json ./` + `RUN npm install` pair is skipped entirely on
+// repeat deploys instead of reinstalling every dependency every time.
+const CACHE_TTL = '336h'; // 14 days
+const ARTIFACT_REPO = 'cloud-run-source-deploy';
+
+function getImageTag(serviceName) {
+  return `${REGION}-docker.pkg.dev/${PROJECT}/${ARTIFACT_REPO}/${serviceName}:latest`;
+}
+
+function buildAndPushImage(stageDir, serviceName) {
+  const imageTag = getImageTag(serviceName);
+  const cloudbuildYaml = `
+steps:
+  - name: 'gcr.io/kaniko-project/executor:latest'
+    args:
+      - --dockerfile=Dockerfile
+      - --destination=${imageTag}
+      - --cache=true
+      - --cache-ttl=${CACHE_TTL}
+options:
+  logging: CLOUD_LOGGING_ONLY
+`;
+  fs.writeFileSync(path.join(stageDir, 'cloudbuild.yaml'), cloudbuildYaml);
+
+  runGcloud([
+    'builds', 'submit', stageDir,
+    '--config', path.join(stageDir, 'cloudbuild.yaml'),
+    '--project', PROJECT
+  ], `Building image for ${serviceName} (Kaniko, cached)`);
+
+  return imageTag;
+}
+
 function getServiceUrl(serviceName) {
   return execFileSync('gcloud', [
     'run', 'services', 'describe', serviceName,
@@ -163,23 +208,26 @@ function deployBackend(rootDir, config, backendService) {
   ].join(',');
 
   const stageDir = stageSourceDir(rootDir, 'backend');
+  let imageTag;
   try {
-    runGcloud([
-      'run', 'deploy', backendService,
-      '--source', stageDir,
-      '--project', PROJECT,
-      '--region', REGION,
-      '--platform', 'managed',
-      '--allow-unauthenticated',
-      '--execution-environment', 'gen2',
-      '--service-account', RUNTIME_SERVICE_ACCOUNT,
-      '--add-volume', `name=storage-volume,type=cloud-storage,bucket=${STORAGE_BUCKET}`,
-      '--add-volume-mount', 'volume=storage-volume,mount-path=/app/storage',
-      '--set-env-vars', envVars
-    ], `Deploying backend (${backendService})`);
+    imageTag = buildAndPushImage(stageDir, backendService);
   } finally {
     fs.rmSync(stageDir, { recursive: true, force: true });
   }
+
+  runGcloud([
+    'run', 'deploy', backendService,
+    '--image', imageTag,
+    '--project', PROJECT,
+    '--region', REGION,
+    '--platform', 'managed',
+    '--allow-unauthenticated',
+    '--execution-environment', 'gen2',
+    '--service-account', RUNTIME_SERVICE_ACCOUNT,
+    '--add-volume', `name=storage-volume,type=cloud-storage,bucket=${STORAGE_BUCKET}`,
+    '--add-volume-mount', 'volume=storage-volume,mount-path=/app/storage',
+    '--set-env-vars', envVars
+  ], `Deploying backend (${backendService})`);
 
   return getServiceUrl(backendService);
 }
@@ -197,18 +245,21 @@ function deployFrontend(rootDir, config, frontendService, backendUrl) {
   };
 
   const stageDir = stageFrontendSourceDir(rootDir, buildVars);
+  let imageTag;
   try {
-    runGcloud([
-      'run', 'deploy', frontendService,
-      '--source', stageDir,
-      '--project', PROJECT,
-      '--region', REGION,
-      '--platform', 'managed',
-      '--allow-unauthenticated'
-    ], `Deploying frontend (${frontendService})`);
+    imageTag = buildAndPushImage(stageDir, frontendService);
   } finally {
     fs.rmSync(stageDir, { recursive: true, force: true });
   }
+
+  runGcloud([
+    'run', 'deploy', frontendService,
+    '--image', imageTag,
+    '--project', PROJECT,
+    '--region', REGION,
+    '--platform', 'managed',
+    '--allow-unauthenticated'
+  ], `Deploying frontend (${frontendService})`);
 
   return getServiceUrl(frontendService);
 }
