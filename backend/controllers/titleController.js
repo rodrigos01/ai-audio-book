@@ -124,7 +124,6 @@ class TitleController {
       content: finalContent,
       voice_id: voiceId,
       is_ssml: false,
-      performance_prompt: null,
       name: finalName || null,
       ai_casting_status: isAiCasting ? 'in_progress' : null
     });
@@ -169,13 +168,11 @@ class TitleController {
       const processedContent = result.ssml;
       const voiceId = result.narrator_voice;
       const isSSML = tier === 'basic';
-      const performancePrompt = result.performance_prompt || null;
 
       await firestoreStore.updateChapter(chapterId, {
         content: processedContent,
         voice_id: voiceId,
         is_ssml: isSSML,
-        performance_prompt: performancePrompt,
         ai_casting_status: 'completed'
       });
 

@@ -125,7 +125,6 @@ class AICastingService {
         }, {});
 
         let formattedOutput = '';
-        let performancePrompt = null;
 
         if (tier === 'pro') {
             const proPrompt = `
@@ -145,32 +144,11 @@ class AICastingService {
                 ${chapterText}
             `;
 
-            const proSchema = {
-                type: "object",
-                properties: {
-                    performance_prompt: {
-                        type: "string",
-                        description: "Tailored natural language performance prompt describing the vocal style, tone, pace, and mood for this chapter."
-                    },
-                    script: {
-                        type: "string",
-                        description: "The formatted natural language multi-speaker script text with SpeakerAlias: Dialogue lines."
-                    }
-                },
-                required: ["performance_prompt", "script"]
-            };
-
             const proResult = await this.genAI.models.generateContent({
                 ...this.modelConfig,
-                config: {
-                    responseMimeType: "application/json",
-                    responseSchema: proSchema,
-                },
                 contents: proPrompt,
             });
-            const proParsed = JSON.parse(proResult.text);
-            formattedOutput = proParsed.script;
-            performancePrompt = proParsed.performance_prompt;
+            formattedOutput = proResult.text;
         } else {
             const ssmlPrompt = `
                 ### Task: Phase 2 - SSML Generation & Dramatic Rewriting
@@ -204,7 +182,6 @@ class AICastingService {
             ssml: formattedOutput,
             narrator_voice: castingResponse.narrator_voice,
             narrator_personality: castingResponse.narrator_personality || null,
-            performance_prompt: performancePrompt,
         };
     }
 }
