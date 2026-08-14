@@ -26,7 +26,7 @@ class AICastingService {
         };
     }
 
-    async analyzeChapter(chapterText, existingCast = {}, voiceList = [], existingNarrator = null, tier = 'basic') {
+    async analyzeChapter(chapterText, existingCast = {}, voiceList = [], existingNarrator = null, tier = 'basic', existingPersonalities = {}, existingNarratorPersonality = null) {
         if (!process.env.GEMINI_API_KEY) {
             throw new Error("Gemini API key is missing. Please configure it in your environment.");
         }
@@ -44,10 +44,19 @@ class AICastingService {
             style: v.style,
         }));
 
-        const currentCastString = Object.keys(existingCast).map(k => `${k}: ${existingCast[k]}`).join('\n');
-        const castContext = existingNarrator
-            ? `${currentCastString}\nNarrator: ${existingNarrator}`
-            : currentCastString;
+        const currentCastLines = Object.keys(existingCast).map(k => {
+            const personality = existingPersonalities[k];
+            return personality
+                ? `${k}: Voice: ${existingCast[k]}, Personality: "${personality}"`
+                : `${k}: Voice: ${existingCast[k]}`;
+        });
+        if (existingNarrator) {
+            const narratorLine = existingNarratorPersonality
+                ? `Narrator: Voice: ${existingNarrator}, Personality: "${existingNarratorPersonality}"`
+                : `Narrator: Voice: ${existingNarrator}`;
+            currentCastLines.push(narratorLine);
+        }
+        const castContext = currentCastLines.length > 0 ? currentCastLines.join('\n') : 'None';
 
         const castingPrompt = `
             ### Task: Phase 1 - Character Identification & Casting
@@ -62,11 +71,10 @@ class AICastingService {
             ### Instructions:
             1. Identify every character with dialogue in this chapter.
             2. Use simple, single-word names (usually first names, e.g. "Alice" instead of "Dr. Alice Smith", "Kerem" instead of "Kerem Al-Mansoor", "Desmond" instead of "Desmond Vance") for character names in the casting map.
-            3. For characters in the "Current Title Cast", you MUST reuse their assigned voice ID.
+            3. For characters in the "Current Title Cast", you MUST reuse their assigned voice ID and personality.
             4. For new characters, assign a voice from the "Available Voices" that matches their characteristics, personality, and gender.
-                - DO NOT assign the same voice to multiple characters.
             5. Assign a Narrator voice, if one was not assigned yet. If the text is a first-person narrative, use the same voice as the main character.
-            7. For each character and the Narrator, provide a succinct description of how they should sound (e.g. "Inquisitive, articulate host with warm tone", "Calm, steady storyteller with gentle warmth") in the "personality" and "narrator_personality" fields. If a character is described as having a specific accent, or as coming from a specific region, include that in the personality description. If the narrator is the main charachter, they should have identical personalities.
+            7. For each character and the Narrator, provide a succinct description of how they should sound (e.g. "Inquisitive, articulate host with warm tone", "Calm, steady storyteller with gentle warmth") in the "personality" and "narrator_personality" fields. If a character is described as having a specific accent, or as coming from a specific region, you must include it in the personality description. If the narrator is the main character, they should have identical personalities.
 
             ### Chapter Text:
             ${chapterText}

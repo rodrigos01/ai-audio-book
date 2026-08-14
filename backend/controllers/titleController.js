@@ -150,8 +150,18 @@ class TitleController {
       debugLog(`AI Casting background (${tier}): Auto-casting new chapter ${chapterId} for ${title.name}`);
       const existingCast = title.casting_map || {};
       const existingNarrator = title.narrator_voice || null;
+      const existingPersonalities = title.character_personalities || {};
+      const existingNarratorPersonality = title.narrator_personality || null;
 
-      const result = await aiCasting.analyzeChapter(finalContent, existingCast, VOICES, existingNarrator, tier);
+      const result = await aiCasting.analyzeChapter(
+        finalContent,
+        existingCast,
+        VOICES,
+        existingNarrator,
+        tier,
+        existingPersonalities,
+        existingNarratorPersonality
+      );
 
       const titleUpdate = { casting_map: result.updated_cast };
       if (!title.narrator_voice) titleUpdate.narrator_voice = result.narrator_voice;
