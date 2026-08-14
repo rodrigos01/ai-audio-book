@@ -1,10 +1,12 @@
 name: Deploy to Cloud Run
 
-# Deploys production (ai-audio-book / ai-audio-book-api, unprefixed -- see
-# scripts/deploy-source-helper.js's branch-prefix logic) on every push to
-# master. This intentionally does NOT cover claude-develop: that pair stays
-# under direct control of whichever Claude Code agent is iterating on it,
-# deployed interactively via `npm run deploy-source`.
+# Deploys on every push to master (production: ai-audio-book /
+# ai-audio-book-api, unprefixed) or claude-develop (the shared dev pair:
+# claude-develop-ai-audio-book(-api)) -- see scripts/deploy-source-helper.js's
+# branch-prefix logic, which this reuses as-is. Agents should push to
+# claude-develop to deploy rather than running `npm run deploy-source`
+# interactively: this path is faster (see below) and doesn't require a
+# Claude Code cloud session's sandbox at all. See CLAUDE.md.
 #
 # Builds are done directly on the runner with Docker Buildx + its native
 # GitHub Actions cache backend, rather than shelling out to Kaniko/Cloud
@@ -14,14 +16,24 @@ name: Deploy to Cloud Run
 # provisioning latency, no Kaniko executor image pull, and no GCS
 # source-upload round trip. See scripts/actions-deploy.js.
 #
-# Requires the corresponding Cloud Build trigger ("ai-audio-book-deploy",
-# push to master) to be disabled in the console so both don't fire on the
-# same push -- see CLAUDE.md.
+# Requires the corresponding Cloud Build triggers ("ai-audio-book-deploy" for
+# master, "ai-audio-book-deploy-claude-develop" for claude-develop) to be
+# disabled in the console so they don't also fire on the same push -- see
+# CLAUDE.md.
 on:
   push:
     branches:
       - master
+      - claude-develop
   workflow_dispatch: {}
+
+# A second push to the same branch while a deploy is still running would
+# race with it -- concurrent `gcloud run deploy` calls against the same
+# service can finish out of order, so the wrong revision could end up
+# serving traffic. Cancel the in-flight run for that branch instead.
+concurrency:
+  group: deploy-${{ github.ref }}
+  cancel-in-progress: true
 
 permissions:
   contents: read
