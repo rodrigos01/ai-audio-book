@@ -6,7 +6,8 @@
   "scripts": {
     "dev": "nodemon server.js",
     "test": "echo \"Error: no test specified\" && exit 1",
-    "deploy": "node scripts/deploy.js"
+    "deploy": "node scripts/deploy.js",
+    "deploy-source": "node scripts/deploy-source.js"
   },
   "keywords": [],
   "author": "",

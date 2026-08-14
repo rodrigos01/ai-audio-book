@@ -1,0 +1,214 @@
+const fs = require('fs');
+const os = require('os');
+const path = require('path');
+const { spawnSync, execFileSync } = require('child_process');
+
+// Some sandboxes (e.g. Claude Code cloud sessions) set a placeholder
+// CLOUDSDK_AUTH_ACCESS_TOKEN meant for their own proxied Google API calls.
+// gcloud prefers that over an explicitly activated service account, which
+// breaks auth for deploys against an arbitrary GCP project. Clear it so
+// `gcloud auth activate-service-account` (or ADC) is used instead.
+delete process.env.CLOUDSDK_AUTH_ACCESS_TOKEN;
+
+const PROJECT = 'ai-audio-book';
+const REGION = 'us-central1';
+const RUNTIME_SERVICE_ACCOUNT = 'player@ai-audio-book.iam.gserviceaccount.com';
+const STORAGE_BUCKET = 'ai-audio-book-storage-ai-audio-book';
+
+function loadEnv(filePath) {
+  if (!fs.existsSync(filePath)) return {};
+  const content = fs.readFileSync(filePath, 'utf-8');
+  const env = {};
+  content.split('\n').forEach(line => {
+    const trimmed = line.trim();
+    if (!trimmed || trimmed.startsWith('#')) return;
+    const match = trimmed.match(/^([^=]+)=(.*)$/);
+    if (match) {
+      let key = match[1].trim();
+      let value = match[2].trim();
+      if ((value.startsWith('"') && value.endsWith('"')) || (value.startsWith("'") && value.endsWith("'"))) {
+        value = value.slice(1, -1);
+      }
+      env[key] = value;
+    }
+  });
+  return env;
+}
+
+function loadConfig(rootDir) {
+  const frontendEnv = loadEnv(path.join(rootDir, 'frontend/.env'));
+  const backendEnv = loadEnv(path.join(rootDir, 'backend/.env'));
+  const rootEnv = loadEnv(path.join(rootDir, '.env'));
+  return { ...frontendEnv, ...backendEnv, ...rootEnv, ...process.env };
+}
+
+// Cloud Build's built-in $BRANCH_NAME substitution used by cloudbuild.yaml is only
+// populated when a build is triggered from a connected repo -- it's empty for a
+// manual `gcloud builds submit`/`gcloud run deploy --source`. Compute the prefix
+// straight from git instead, so this works the same everywhere.
+function getBranchServicePrefix() {
+  const branch = execFileSync('git', ['rev-parse', '--abbrev-ref', 'HEAD'], { encoding: 'utf-8' }).trim();
+  if (branch === 'master') return '';
+  const sanitized = branch
+    .toLowerCase()
+    .replace(/[^a-z0-9-]+/g, '-')
+    .replace(/-+/g, '-')
+    .replace(/^-+|-+$/g, '')
+    .slice(0, 40);
+  return `${sanitized}-`;
+}
+
+function runGcloud(args, label) {
+  console.log(`\n--- ${label} ---`);
+  console.log(`gcloud ${args.join(' ')}\n`);
+  const result = spawnSync('gcloud', args, { stdio: 'inherit' });
+  if (result.status !== 0) {
+    console.error(`${label} failed with exit code ${result.status}`);
+    process.exit(result.status || 1);
+  }
+}
+
+// backend/Dockerfile and frontend/Dockerfile assume a repo-root build context
+// (they COPY "backend/..." / "frontend/..."), matching how cloudbuild.yaml
+// invokes `docker build -f backend/Dockerfile .`. `gcloud run deploy --source`
+// has no way to decouple the Dockerfile's location from its build context, so
+// it can't use those directly. Stage a clean copy of the subdir instead (minus
+// node_modules/.env/credentials) with the self-contained Dockerfile.source
+// copied in as `Dockerfile`.
+const STAGE_SKIP_NAMES = new Set(['node_modules', '.env', '.git', 'dist', '.gcloudignore', 'Dockerfile.source']);
+
+function stageDirCopy(rootDir, subdir) {
+  const srcDir = path.join(rootDir, subdir);
+  const stageDir = fs.mkdtempSync(path.join(os.tmpdir(), `deploy-source-${subdir}-`));
+  fs.cpSync(srcDir, stageDir, {
+    recursive: true,
+    filter: (src) => {
+      const base = path.basename(src);
+      if (STAGE_SKIP_NAMES.has(base)) return false;
+      if (base.startsWith('ai-audio-book-') && base.endsWith('.json')) return false;
+      return true;
+    }
+  });
+  return { srcDir, stageDir };
+}
+
+function stageSourceDir(rootDir, subdir) {
+  const { srcDir, stageDir } = stageDirCopy(rootDir, subdir);
+  fs.copyFileSync(path.join(srcDir, 'Dockerfile.source'), path.join(stageDir, 'Dockerfile'));
+  return stageDir;
+}
+
+// `gcloud run deploy --source` does NOT pass --set-build-env-vars through as
+// `docker build --build-arg` for Dockerfile-based builds (verified against
+// the actual Cloud Build step it generates -- no --build-arg flags appear).
+// So instead of relying on ARG defaults coming from the build invocation,
+// bake the resolved values directly into `ARG NAME=value` lines when staging
+// the Dockerfile. Dockerfile.source keeps bare `ARG NAME` (no default) as
+// the readable template; this rewrites just those lines per deploy.
+function stageFrontendSourceDir(rootDir, buildVars) {
+  const { srcDir, stageDir } = stageDirCopy(rootDir, 'frontend');
+  let dockerfile = fs.readFileSync(path.join(srcDir, 'Dockerfile.source'), 'utf-8');
+  for (const [name, value] of Object.entries(buildVars)) {
+    const escaped = String(value).replace(/"/g, '\\"');
+    dockerfile = dockerfile.replace(
+      new RegExp(`^ARG ${name}$`, 'm'),
+      `ARG ${name}="${escaped}"`
+    );
+  }
+  fs.writeFileSync(path.join(stageDir, 'Dockerfile'), dockerfile);
+  return stageDir;
+}
+
+function getServiceUrl(serviceName) {
+  return execFileSync('gcloud', [
+    'run', 'services', 'describe', serviceName,
+    '--region', REGION,
+    '--project', PROJECT,
+    '--format', 'value(status.url)'
+  ], { encoding: 'utf-8' }).trim();
+}
+
+function deployBackend(rootDir, config, backendService) {
+  const envVars = [
+    'STORAGE_BASE_PATH=/app/storage',
+    // Overrides the Dockerfile's baked-in GOOGLE_APPLICATION_CREDENTIALS path
+    // (a key file this source-based deploy never bakes into the image) so the
+    // app's own fallback logic picks up Application Default Credentials via
+    // the attached runtime service account instead of trying to read a file
+    // that doesn't exist.
+    'GOOGLE_APPLICATION_CREDENTIALS=',
+    'NODE_ENV=production',
+    `GOOGLE_CLOUD_PROJECT=${PROJECT}`,
+    `GEMINI_API_KEY=${config.GEMINI_API_KEY || ''}`
+  ].join(',');
+
+  const stageDir = stageSourceDir(rootDir, 'backend');
+  try {
+    runGcloud([
+      'run', 'deploy', backendService,
+      '--source', stageDir,
+      '--project', PROJECT,
+      '--region', REGION,
+      '--platform', 'managed',
+      '--allow-unauthenticated',
+      '--execution-environment', 'gen2',
+      '--service-account', RUNTIME_SERVICE_ACCOUNT,
+      '--add-volume', `name=storage-volume,type=cloud-storage,bucket=${STORAGE_BUCKET}`,
+      '--add-volume-mount', 'volume=storage-volume,mount-path=/app/storage',
+      '--set-env-vars', envVars
+    ], `Deploying backend (${backendService})`);
+  } finally {
+    fs.rmSync(stageDir, { recursive: true, force: true });
+  }
+
+  return getServiceUrl(backendService);
+}
+
+function deployFrontend(rootDir, config, frontendService, backendUrl) {
+  const buildVars = {
+    VITE_FIREBASE_API_KEY: config.VITE_FIREBASE_API_KEY || '',
+    VITE_FIREBASE_AUTH_DOMAIN: config.VITE_FIREBASE_AUTH_DOMAIN || '',
+    VITE_FIREBASE_PROJECT_ID: config.VITE_FIREBASE_PROJECT_ID || '',
+    VITE_FIREBASE_STORAGE_BUCKET: config.VITE_FIREBASE_STORAGE_BUCKET || '',
+    VITE_FIREBASE_MESSAGING_SENDER_ID: config.VITE_FIREBASE_MESSAGING_SENDER_ID || '',
+    VITE_FIREBASE_APP_ID: config.VITE_FIREBASE_APP_ID || '',
+    VITE_GOOGLE_CLIENT_ID: config.VITE_GOOGLE_CLIENT_ID || '',
+    VITE_API_BASE_URL: `${backendUrl}/api`
+  };
+
+  const stageDir = stageFrontendSourceDir(rootDir, buildVars);
+  try {
+    runGcloud([
+      'run', 'deploy', frontendService,
+      '--source', stageDir,
+      '--project', PROJECT,
+      '--region', REGION,
+      '--platform', 'managed',
+      '--allow-unauthenticated'
+    ], `Deploying frontend (${frontendService})`);
+  } finally {
+    fs.rmSync(stageDir, { recursive: true, force: true });
+  }
+
+  return getServiceUrl(frontendService);
+}
+
+function updateBackendCors(backendService, frontendUrl) {
+  runGcloud([
+    'run', 'services', 'update', backendService,
+    '--project', PROJECT,
+    '--region', REGION,
+    '--update-env-vars', `ALLOWED_ORIGINS=${frontendUrl}`
+  ], `Updating backend CORS (${backendService})`);
+}
+
+module.exports = {
+  PROJECT,
+  REGION,
+  loadConfig,
+  getBranchServicePrefix,
+  deployBackend,
+  deployFrontend,
+  updateBackendCors,
+  getServiceUrl
+};

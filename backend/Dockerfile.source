@@ -1,0 +1,19 @@
+# Self-contained Dockerfile for `gcloud run deploy --source`, whose build
+# context is the directory it's given directly (unlike backend/Dockerfile,
+# which cloudbuild.yaml builds from the repo root and can't be pointed at a
+# different context). Used via scripts/deploy-source-helper.js, which stages
+# a clean copy of this directory (minus node_modules/.env/credentials) and
+# copies this file in as `Dockerfile`.
+FROM node:20-slim
+WORKDIR /app
+ENV NODE_ENV=production
+ENV PORT=8080
+ENV STORAGE_BASE_PATH=/app/storage
+
+COPY package*.json ./
+RUN npm install --production
+
+COPY . ./
+
+EXPOSE 8080
+CMD ["node", "server.js"]

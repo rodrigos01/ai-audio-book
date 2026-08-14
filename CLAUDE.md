@@ -39,6 +39,23 @@ These scripts (`scripts/deploy.js`, `backend/scripts/deploy.js`, `frontend/scrip
 
 Cloud Build service naming: all three `cloudbuild.yaml` files (root, `backend/`, `frontend/`) prefix the deployed Cloud Run **services** (`ai-audio-book-api`, `ai-audio-book`) with `<branch>-` using Cloud Build's built-in `$BRANCH_NAME` substitution, except on `master` which deploys unprefixed. The `ai-audio-book-generate-samples` Cloud Run **job** is intentionally exempt and always deploys under that fixed name.
 
+#### Alternate: direct `gcloud run deploy --source` (no Cloud Build config)
+
+For a quick scoped deploy of the current branch (e.g. to get a live URL for a sandboxed/cloud session that can't otherwise expose a local server), use the `deploy-source` scripts instead:
+```bash
+npm run deploy-source            # both, sequential (backend first, frontend picks up its URL)
+npm run deploy-source-backend    # backend only
+npm run deploy-source-frontend   # frontend only (requires the backend service to already exist)
+```
+These (`scripts/deploy-source.js` / `backend/scripts/deploy-source.js` / `frontend/scripts/deploy-source.cjs`, sharing `scripts/deploy-source-helper.js`) call `gcloud run deploy --source` directly instead of `gcloud builds submit --config=cloudbuild.yaml`. Notable differences from the `cloudbuild.yaml` path above:
+- **Branch prefix is computed from `git rev-parse --abbrev-ref HEAD`**, not Cloud Build's `$BRANCH_NAME` substitution — that substitution is only populated for builds triggered from a connected repo and is empty for a manual submit/deploy, which is what these scripts do (`master` still deploys unprefixed).
+- **Requires `backend/Dockerfile.source` and `frontend/Dockerfile.source`**, not `backend/Dockerfile` / `frontend/Dockerfile`. Those Dockerfiles assume a repo-root build context (`COPY backend/...`) because that's how `cloudbuild.yaml` invokes `docker build -f backend/Dockerfile .`; `gcloud run deploy --source` can't decouple a Dockerfile's location from its build context, so the helper stages a clean copy of `backend/`/`frontend/` (skipping `node_modules`, `.env`, credential JSON) with the self-contained `Dockerfile.source` copied in as `Dockerfile`.
+- **Frontend build args are baked into `Dockerfile.source`'s `ARG NAME=value` defaults at stage time**, not passed via `--build-arg`/`--set-build-env-vars` — `gcloud run deploy --source` does not pass `--set-build-env-vars` through to `docker build --build-arg` for Dockerfile-based builds (verified against the actual Cloud Build step it generates: no `--build-arg` flags appear).
+- **Runs the backend as `player@ai-audio-book.iam.gserviceaccount.com` directly** (`--service-account`, with `GOOGLE_APPLICATION_CREDENTIALS` explicitly cleared) instead of baking a downloaded key file into the image, so it needs no GCS secrets bucket.
+- If a sandbox sets a placeholder `CLOUDSDK_AUTH_ACCESS_TOKEN` for its own proxied Google API calls (seen in Claude Code cloud sessions), `gcloud` prefers that over an activated service account and deploys fail with `UNAUTHENTICATED`; `deploy-source-helper.js` clears that env var for its own `gcloud` calls, but ad-hoc `gcloud` commands still need `env -u CLOUDSDK_AUTH_ACCESS_TOKEN`.
+
+The `.claude/hooks/session-start.sh` SessionStart hook (see below) installs `gcloud` automatically in remote/cloud sessions, so these scripts work there without setup.
+
 ## Architecture
 
 **Monorepo, two independently deployed services**, wired together only through HTTP:
@@ -66,6 +83,8 @@ Small React Router app: `App.jsx` defines routes `/` (`pages/Home.jsx`), `/title
 ## Environment
 
 Backend needs a `backend/.env` with `GEMINI_API_KEY` and `GOOGLE_APPLICATION_CREDENTIALS` (path to the GCP service account JSON). Frontend needs a `frontend/.env` with `VITE_FIREBASE_API_KEY`, `VITE_FIREBASE_AUTH_DOMAIN`, `VITE_FIREBASE_PROJECT_ID`, `VITE_FIREBASE_STORAGE_BUCKET`, `VITE_FIREBASE_MESSAGING_SENDER_ID`, `VITE_FIREBASE_APP_ID`. Neither file nor `*.json` credential files are committed (see `.gitignore`).
+
+In Claude Code cloud sessions, `.claude/hooks/session-start.sh` (a `SessionStart` hook, registered in `.claude/settings.json`) handles this automatically: it decodes a `GOOGLE_APPLICATION_CREDENTIALS_BASE64` environment variable (set in the cloud environment's settings) into `~/credentials/service-account.json`, writes `GOOGLE_APPLICATION_CREDENTIALS` into both `$CLAUDE_ENV_FILE` and `backend/.env`, and installs+authenticates `gcloud`. This has to be a session-start hook rather than the environment's own setup script — `GOOGLE_APPLICATION_CREDENTIALS_BASE64` (and any other cloud-environment env var) is only ever injected into the `claude` process's own environment, never into the container entrypoint, `environment-manager`, or anything a setup script runs, since a setup script runs earlier in boot, before that process exists.
 
 ## Verification
 
