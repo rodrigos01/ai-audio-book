@@ -46,9 +46,15 @@ For a quick scoped deploy of the current branch (e.g. to get a live URL for a sa
 npm run deploy-source            # both, sequential (backend first, frontend picks up its URL)
 npm run deploy-source-backend    # backend only
 npm run deploy-source-frontend   # frontend only (requires the backend service to already exist)
+
+# Optional positional args override the service name(s) instead of the default:
+npm run deploy-source-backend -- my-service-name
+npm run deploy-source-frontend -- my-frontend-name my-backend-name
+npm run deploy-source -- my-backend-name my-frontend-name
 ```
 These (`scripts/deploy-source.js` / `backend/scripts/deploy-source.js` / `frontend/scripts/deploy-source.cjs`, sharing `scripts/deploy-source-helper.js`) call `gcloud run deploy --source` directly instead of `gcloud builds submit --config=cloudbuild.yaml`. Notable differences from the `cloudbuild.yaml` path above:
-- **Branch prefix is computed from `git rev-parse --abbrev-ref HEAD`**, not Cloud Build's `$BRANCH_NAME` substitution — that substitution is only populated for builds triggered from a connected repo and is empty for a manual submit/deploy, which is what these scripts do (`master` still deploys unprefixed).
+- **Service names default to `claude-develop-ai-audio-book(-api)` in Claude Code cloud sessions** (detected via `CLAUDE_CODE_REMOTE=true`) — a fixed, persistent pair of services, so repeated agent runs across disposable session containers redeploy the same known URL instead of each minting a new one that needs manual teardown. Outside a Claude Code cloud session, the default falls back to a branch-prefixed name (see below). Pass an explicit service name as a CLI arg (see usage above) to override either default — `resolveServiceName` in `scripts/deploy-source-helper.js` is the single place this logic lives.
+- **Branch prefix (the non-Claude-env default) is computed from `git rev-parse --abbrev-ref HEAD`**, not Cloud Build's `$BRANCH_NAME` substitution — that substitution is only populated for builds triggered from a connected repo and is empty for a manual submit/deploy, which is what these scripts do (`master` still deploys unprefixed).
 - **Requires `backend/Dockerfile.source` and `frontend/Dockerfile.source`**, not `backend/Dockerfile` / `frontend/Dockerfile`. Those Dockerfiles assume a repo-root build context (`COPY backend/...`) because that's how `cloudbuild.yaml` invokes `docker build -f backend/Dockerfile .`; `gcloud run deploy --source` can't decouple a Dockerfile's location from its build context, so the helper stages a clean copy of `backend/`/`frontend/` (skipping `node_modules`, `.env`, credential JSON) with the self-contained `Dockerfile.source` copied in as `Dockerfile`.
 - **Frontend build args are baked into `Dockerfile.source`'s `ARG NAME=value` defaults at stage time**, not passed via `--build-arg`/`--set-build-env-vars` — `gcloud run deploy --source` does not pass `--set-build-env-vars` through to `docker build --build-arg` for Dockerfile-based builds (verified against the actual Cloud Build step it generates: no `--build-arg` flags appear).
 - **Runs the backend as `player@ai-audio-book.iam.gserviceaccount.com` directly** (`--service-account`, with `GOOGLE_APPLICATION_CREDENTIALS` explicitly cleared) instead of baking a downloaded key file into the image, so it needs no GCS secrets bucket.

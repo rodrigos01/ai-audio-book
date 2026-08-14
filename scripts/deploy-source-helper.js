@@ -58,6 +58,26 @@ function getBranchServicePrefix() {
   return `${sanitized}-`;
 }
 
+// Claude Code cloud sessions get a fresh, disposable container per session,
+// so a branch-prefixed service would pile up a new pair of Cloud Run services
+// (and need manual teardown) every time an agent runs this. Point them at
+// the one persistent claude-develop-* pair instead, so repeated agent runs
+// redeploy the same known URL rather than minting new ones.
+const CLAUDE_DEV_SERVICE_PREFIX = 'claude-develop-';
+
+function getDefaultServicePrefix() {
+  if (process.env.CLAUDE_CODE_REMOTE === 'true') return CLAUDE_DEV_SERVICE_PREFIX;
+  return getBranchServicePrefix();
+}
+
+// Resolves the service name to deploy: an explicit override if one was
+// passed (e.g. a CLI arg), otherwise the default prefix (claude-develop-* in
+// Claude Code cloud sessions, branch-derived everywhere else) plus suffix.
+function resolveServiceName(explicitName, suffix) {
+  if (explicitName) return explicitName;
+  return `${getDefaultServicePrefix()}${suffix}`;
+}
+
 function runGcloud(args, label) {
   console.log(`\n--- ${label} ---`);
   console.log(`gcloud ${args.join(' ')}\n`);
@@ -207,6 +227,7 @@ module.exports = {
   REGION,
   loadConfig,
   getBranchServicePrefix,
+  resolveServiceName,
   deployBackend,
   deployFrontend,
   updateBackendCors,
