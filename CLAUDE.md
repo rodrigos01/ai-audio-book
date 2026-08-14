@@ -63,6 +63,20 @@ These (`scripts/deploy-source.js` / `backend/scripts/deploy-source.js` / `fronte
 
 The `.claude/hooks/session-start.sh` SessionStart hook (see below) installs `gcloud` automatically in remote/cloud sessions, so these scripts work there without setup.
 
+#### CI: GitHub Actions for production, agents for `claude-develop`
+
+`.github/workflows/deploy.yml` deploys production on every push to `master`, using the `deploy-source` scripts above (so it gets the same Kaniko layer caching). It authenticates to GCP via **Workload Identity Federation** — no stored key. The trust chain, scoped as tightly as WIF allows:
+- Pool: `github-actions-pool`, provider: `github-actions-provider` (both in the `ai-audio-book` project, `global` location).
+- The provider's `--attribute-condition` only accepts OIDC tokens where `assertion.repository == 'rodrigos01/ai-audio-book' && assertion.ref == 'refs/heads/master'` — tokens from any other repo, or from any other branch/PR *within* this repo, are rejected before IAM is even consulted.
+- `player@ai-audio-book.iam.gserviceaccount.com` grants `roles/iam.workloadIdentityUser` only to the principal set for that same repo, as a second, independent layer of scoping.
+- `claude-develop` is deliberately **not** wired into this workflow — that pair stays under direct agent control (`npm run deploy-source` from an interactive Claude Code session), not CI, so this trust relationship never needs to cover more than `master`.
+
+Requires one manually-added secret, `GEMINI_API_KEY` (Settings → Secrets and variables → Actions) — everything else the workflow needs (Firebase web config, Google OAuth client ID) isn't actually sensitive (it's already public in the deployed frontend bundle) and is inlined directly in the workflow file instead.
+
+This coexists with the `ai-audio-book-deploy` Cloud Build trigger (push to `master`, see above) unless that trigger is disabled in the Cloud Build console — leaving both enabled means every push to `master` deploys twice, redundantly but not conflictingly (same target services, same result). The `ai-audio-book-deploy-claude-develop` trigger (push to `claude-develop`) is unrelated to this workflow and can stay as-is either way.
+
+`getBranchServicePrefix()` in `scripts/deploy-source-helper.js` checks `GITHUB_REF_NAME` before falling back to `git rev-parse --abbrev-ref HEAD` — required because `actions/checkout` leaves the repo in a detached-HEAD state, where that git command returns the literal string `"HEAD"` instead of the branch name.
+
 ## Architecture
 
 **Monorepo, two independently deployed services**, wired together only through HTTP:

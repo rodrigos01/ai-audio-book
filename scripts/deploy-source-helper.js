@@ -46,8 +46,17 @@ function loadConfig(rootDir) {
 // populated when a build is triggered from a connected repo -- it's empty for a
 // manual `gcloud builds submit`/`gcloud run deploy --source`. Compute the prefix
 // straight from git instead, so this works the same everywhere.
+function getCurrentBranch() {
+  // actions/checkout leaves the repo in a detached HEAD state, so
+  // `git rev-parse --abbrev-ref HEAD` would return the literal string "HEAD"
+  // in GitHub Actions, not the branch name. GITHUB_REF_NAME is GitHub's own
+  // answer to "what branch is this" and takes precedence when present.
+  if (process.env.GITHUB_REF_NAME) return process.env.GITHUB_REF_NAME;
+  return execFileSync('git', ['rev-parse', '--abbrev-ref', 'HEAD'], { encoding: 'utf-8' }).trim();
+}
+
 function getBranchServicePrefix() {
-  const branch = execFileSync('git', ['rev-parse', '--abbrev-ref', 'HEAD'], { encoding: 'utf-8' }).trim();
+  const branch = getCurrentBranch();
   if (branch === 'master') return '';
   const sanitized = branch
     .toLowerCase()

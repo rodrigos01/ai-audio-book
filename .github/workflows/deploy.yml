@@ -1,0 +1,53 @@
+name: Deploy to Cloud Run
+
+# Deploys production (ai-audio-book / ai-audio-book-api, unprefixed -- see
+# scripts/deploy-source-helper.js's branch-prefix logic) on every push to
+# master. This intentionally does NOT cover claude-develop: that pair stays
+# under direct control of whichever Claude Code agent is iterating on it,
+# deployed interactively via `npm run deploy-source`.
+#
+# Requires the corresponding Cloud Build trigger ("ai-audio-book-deploy",
+# push to master) to be disabled in the console so both don't fire on the
+# same push -- see CLAUDE.md.
+on:
+  push:
+    branches:
+      - master
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+  id-token: write # required to mint the OIDC token for Workload Identity Federation
+
+env:
+  # Not secrets -- these are Firebase web config / OAuth client ID, already
+  # public in the deployed frontend bundle. Only GEMINI_API_KEY needs to be
+  # a real GitHub Actions secret (Settings > Secrets and variables > Actions).
+  VITE_FIREBASE_API_KEY: AIzaSyDb8FBgtIWzUwpSG_5GucqU0OrqZ6wp_ZI
+  VITE_FIREBASE_AUTH_DOMAIN: ai-audio-book.firebaseapp.com
+  VITE_FIREBASE_PROJECT_ID: ai-audio-book
+  VITE_FIREBASE_STORAGE_BUCKET: ai-audio-book.firebasestorage.app
+  VITE_FIREBASE_MESSAGING_SENDER_ID: "883622140264"
+  VITE_FIREBASE_APP_ID: "1:883622140264:web:e46d94ff8afe5a94e61edd"
+  VITE_GOOGLE_CLIENT_ID: 883622140264-bvabb03s21b4vq0hul9jlo73f7h4vj5l.apps.googleusercontent.com
+  GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - id: auth
+        uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: projects/883622140264/locations/global/workloadIdentityPools/github-actions-pool/providers/github-actions-provider
+          service_account: player@ai-audio-book.iam.gserviceaccount.com
+
+      - uses: google-github-actions/setup-gcloud@v2
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - run: npm run deploy-source
