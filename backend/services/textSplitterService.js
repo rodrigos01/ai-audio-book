@@ -62,7 +62,7 @@ function splitSSMLIntoSections(ssml) {
   return validSections;
 }
 
-function splitMultiSpeakerIntoSections(scriptText, maxBytes = 4000, maxSpeakers = 2) {
+function splitMultiSpeakerIntoSections(scriptText, maxBytes = 800, maxSpeakers = 2) {
   if (!scriptText) return [];
 
   const cleanText = scriptText.replace(/```[a-z]*\s*/gi, '').replace(/```/gi, '').trim();
