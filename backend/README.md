@@ -23,7 +23,10 @@ backend/
 │   └── voiceController.js        # Voice catalog enrichment
 ├── stores/                       # Data Management Layer
 │   ├── firestoreStore.js         # Unified Firestore database collection queries & batch updates
-│   └── audioFileStore.js         # Dedicated file storage manager for MP3 caching
+│   └── audioStore/               # MP3 section audio caching, pluggable by AUDIO_STORE_DRIVER
+│       ├── index.js              # Selects LocalAudioStore (default) or GcsAudioStore
+│       ├── LocalAudioStore.js    # Reads/writes local disk (or FUSE-mounted GCS); proxies segment bytes through the app
+│       └── GcsAudioStore.js      # Reads/writes GCS directly; hands out signed URLs so segments are served straight from GCS
 ├── services/                     # Domain Services
 │   ├── googleDocsService.js      # Google Docs API text extraction service
 │   ├── aiCastingService.js       # Gemini 3.6 Flash AI voice casting & SSML script generation
@@ -148,4 +151,10 @@ PORT=3005
 STORAGE_BASE_PATH=./storage
 GOOGLE_APPLICATION_CREDENTIALS=./ai-audio-book-36e0611138d4.json
 GEMINI_API_KEY=AIzaSy...
+
+# Optional: switch chapter-audio delivery from app-proxied local/FUSE storage
+# to signed GCS URLs (see stores/audioStore/). Requires the runtime service
+# account to hold roles/iam.serviceAccountTokenCreator on itself.
+AUDIO_STORE_DRIVER=local
+AUDIO_STORE_BUCKET=
 ```

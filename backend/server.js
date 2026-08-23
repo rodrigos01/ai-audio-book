@@ -6,7 +6,6 @@ const fs = require('fs');
 const path = require('path');
 const authMiddleware = require('./auth');
 const clientIdMiddleware = require('./middleware/clientId');
-const audioFileStore = require('./stores/audioFileStore');
 const { debugLog } = require('./services/logger');
 
 const titleRoutes = require('./routes/titleRoutes');
@@ -16,6 +15,11 @@ const authRoutes = require('./routes/authRoutes');
 
 const app = express();
 const PORT = process.env.PORT || 3005;
+
+// Cloud Run terminates TLS upstream and forwards plain HTTP, so req.protocol
+// needs X-Forwarded-Proto to report https correctly (used to build absolute
+// segment URLs for the HLS playlist).
+app.set('trust proxy', true);
 
 // Basic health check
 app.get('/health', (req, res) => res.status(200).send('OK'));
@@ -44,8 +48,11 @@ if (fs.existsSync(frontendDist)) {
   debugLog(`Frontend dist not found at: ${frontendDist}`);
 }
 
-if (fs.existsSync(audioFileStore.samplesDir)) {
-  app.use('/samples', express.static(audioFileStore.samplesDir));
+// Voice preview samples stay on local/FUSE-mounted disk regardless of
+// AUDIO_STORE_DRIVER — they're a separate, much smaller asset than chapter audio.
+const samplesDir = path.join(path.resolve(process.env.STORAGE_BASE_PATH || __dirname), 'samples');
+if (fs.existsSync(samplesDir)) {
+  app.use('/samples', express.static(samplesDir));
 }
 
 app.use(cors({
