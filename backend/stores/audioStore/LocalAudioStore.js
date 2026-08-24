@@ -1,28 +1,21 @@
 const fs = require('fs');
 const path = require('path');
-const { debugLog } = require('../services/logger');
+const { debugLog } = require('../../services/logger');
 
-class AudioFileStore {
+class LocalAudioStore {
   constructor() {
-    this.storageBasePath = path.resolve(process.env.STORAGE_BASE_PATH || path.resolve(__dirname, '..'));
+    this.storageBasePath = path.resolve(process.env.STORAGE_BASE_PATH || path.resolve(__dirname, '../..'));
     this.audioDir = path.join(this.storageBasePath, 'audio_files');
-    this.samplesDir = path.join(this.storageBasePath, 'samples');
-    this.ensureStorageDirs();
-  }
-
-  ensureStorageDirs() {
-    [this.audioDir, this.samplesDir].forEach(dir => {
-      if (!fs.existsSync(dir)) {
-        fs.mkdirSync(dir, { recursive: true });
-      }
-    });
+    if (!fs.existsSync(this.audioDir)) {
+      fs.mkdirSync(this.audioDir, { recursive: true });
+    }
   }
 
   getSectionAudioPath(sectionId) {
     return path.join(this.audioDir, `${sectionId}.mp3`);
   }
 
-  readSectionAudio(sectionId) {
+  async readSectionAudio(sectionId) {
     const localPath = this.getSectionAudioPath(sectionId);
     if (!fs.existsSync(localPath)) return null;
     try {
@@ -33,13 +26,13 @@ class AudioFileStore {
     }
   }
 
-  saveSectionAudio(sectionId, audioBuffer) {
+  async saveSectionAudio(sectionId, audioBuffer) {
     const localPath = this.getSectionAudioPath(sectionId);
     fs.writeFileSync(localPath, audioBuffer);
     return localPath;
   }
 
-  deleteSectionAudio(sectionId) {
+  async deleteSectionAudio(sectionId) {
     const localPath = this.getSectionAudioPath(sectionId);
     if (fs.existsSync(localPath)) {
       try {
@@ -49,6 +42,13 @@ class AudioFileStore {
       }
     }
   }
+
+  // Local mode still proxies bytes through the existing HLS segment route
+  // (see chapterRoutes.js) rather than serving a file directly, so the URL
+  // just needs to be that route's own address, made absolute.
+  async getSectionAudioUrl({ chapterId, sectionIndex, baseUrl, queryString = '' }) {
+    return `${baseUrl}/api/chapters/${chapterId}/hls/segment/${sectionIndex}${queryString}`;
+  }
 }
 
-module.exports = new AudioFileStore();
+module.exports = LocalAudioStore;

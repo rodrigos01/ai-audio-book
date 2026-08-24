@@ -217,7 +217,12 @@ function deployBackendImage(backendService, imageTag, config) {
     'GOOGLE_APPLICATION_CREDENTIALS=',
     'NODE_ENV=production',
     `GOOGLE_CLOUD_PROJECT=${PROJECT}`,
-    `GEMINI_API_KEY=${config.GEMINI_API_KEY || ''}`
+    `GEMINI_API_KEY=${config.GEMINI_API_KEY || ''}`,
+    // Defaults to 'local' (unchanged behavior) unless a deploy explicitly opts
+    // into signed-GCS-URL delivery. Bucket defaults to the same bucket already
+    // FUSE-mounted above, since that's what a 'gcs' driver almost always means.
+    `AUDIO_STORE_DRIVER=${config.AUDIO_STORE_DRIVER || 'local'}`,
+    `AUDIO_STORE_BUCKET=${config.AUDIO_STORE_BUCKET || STORAGE_BUCKET}`
   ].join(',');
 
   runGcloud([

@@ -1,5 +1,5 @@
 const firestoreStore = require('../stores/firestoreStore');
-const audioFileStore = require('../stores/audioFileStore');
+const audioStore = require('../stores/audioStore');
 const { breakContentIntoSections, splitSSMLIntoSections, buildSectionItems } = require('../services/textSplitterService');
 const { deleteChapterSections, synthesizeAndCacheSection } = require('../services/ttsService');
 const { debugLog } = require('../services/logger');
@@ -53,7 +53,7 @@ class ChapterController {
     for (const section of sections) {
       if (isClosedCheck && isClosedCheck()) break;
 
-      if (audioFileStore.readSectionAudio(section.id)) {
+      if (await audioStore.readSectionAudio(section.id)) {
         generatedCount++;
         continue;
       }
@@ -94,7 +94,7 @@ class ChapterController {
     for (const section of sections) {
       if (isClosedCheck && isClosedCheck()) break;
 
-      const audioBuffer = audioFileStore.readSectionAudio(section.id)
+      const audioBuffer = await audioStore.readSectionAudio(section.id)
         || await synthesizeAndCacheSection(title, chapter, section);
 
       if (audioBuffer && onAudioChunk) {
@@ -103,7 +103,7 @@ class ChapterController {
     }
   }
 
-  async getHLSPlaylist({ chapterId, clientId, userId, queryParams = {} }) {
+  async getHLSPlaylist({ chapterId, clientId, userId, queryParams = {}, baseUrl }) {
     const chapter = await firestoreStore.getChapter(chapterId);
     if (!chapter) throw new NotFoundError('Chapter not found');
     if (chapter.ai_casting_status === 'in_progress') {
@@ -123,19 +123,21 @@ class ChapterController {
     const queryString = queryParts.length > 0 ? `?${queryParts.join('&')}` : '';
 
     let maxDuration = 1;
-    const items = [];
-
-    for (let i = 0; i < sections.length; i++) {
-      const s = sections[i];
+    const durations = sections.map((s) => {
       let dur = s.estimated_duration;
       if (dur == null || isNaN(dur) || dur <= 0) {
         const spokenText = (s.content || '').replace(/<[^>]*>/g, '').trim();
         dur = spokenText.length > 0 ? spokenText.length / 14.5 + 0.5 : 0.5;
       }
       if (dur > maxDuration) maxDuration = dur;
+      return dur;
+    });
 
-      items.push(`#EXTINF:${dur.toFixed(3)},\nsegment/${i}${queryString}`);
-    }
+    const segmentUrls = await Promise.all(sections.map((s, i) =>
+      audioStore.getSectionAudioUrl({ section: s, chapterId, sectionIndex: i, baseUrl, queryString })
+    ));
+
+    const items = sections.map((s, i) => `#EXTINF:${durations[i].toFixed(3)},\n${segmentUrls[i]}`);
 
     const targetDuration = Math.max(1, Math.ceil(maxDuration));
     const playlist = [
@@ -168,7 +170,7 @@ class ChapterController {
     }
 
     const section = sections[idx];
-    const audioBuffer = audioFileStore.readSectionAudio(section.id)
+    const audioBuffer = await audioStore.readSectionAudio(section.id)
       || await synthesizeAndCacheSection(title, chapter, section);
 
     return audioBuffer;

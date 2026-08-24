@@ -2,7 +2,7 @@ const textToSpeech = require('@google-cloud/text-to-speech');
 const fs = require('fs');
 const path = require('path');
 const { debugLog } = require('./logger');
-const audioFileStore = require('../stores/audioFileStore');
+const audioStore = require('../stores/audioStore');
 const firestoreStore = require('../stores/firestoreStore');
 const admin = require('../firebase-config');
 
@@ -162,8 +162,8 @@ async function deleteChapterSections(chapterId) {
 
     sections.forEach(s => {
       batch.delete(dbInstance.collection('chapter_sections').doc(s.id));
-      audioFileStore.deleteSectionAudio(s.id);
     });
+    await Promise.all(sections.map(s => audioStore.deleteSectionAudio(s.id)));
 
     await batch.commit();
     debugLog(`Cleaned up ${sections.length} sections for chapter ${chapterId}`);
@@ -174,10 +174,10 @@ async function deleteChapterSections(chapterId) {
 
 async function handleEmptySectionFallback(sectionId) {
   debugLog(`Section ${sectionId} contains no speakable text. Caching silent fallback audio.`);
-  audioFileStore.saveSectionAudio(sectionId, SILENT_MP3);
+  const audioPath = await audioStore.saveSectionAudio(sectionId, SILENT_MP3);
   await firestoreStore.updateSection(sectionId, {
     status: 'generated',
-    audio_file_path: audioFileStore.getSectionAudioPath(sectionId)
+    audio_file_path: audioPath
   });
   return SILENT_MP3;
 }
@@ -336,8 +336,8 @@ async function synthesizeAndCacheSection(title, chapter, section) {
     const audioBuffer = response.audioContent;
     const elapsed = ((Date.now() - startTime) / 1000).toFixed(2);
 
-    const localPath = audioFileStore.saveSectionAudio(section.id, audioBuffer);
-    await firestoreStore.updateSection(section.id, { status: 'generated', audio_file_path: localPath });
+    const audioPath = await audioStore.saveSectionAudio(section.id, audioBuffer);
+    await firestoreStore.updateSection(section.id, { status: 'generated', audio_file_path: audioPath });
     const msgSuccess = `[TTS Success] Section ${section.id} completed in ${elapsed}s (${audioBuffer.length} bytes audio)`;
     console.log(msgSuccess);
     debugLog(msgSuccess);

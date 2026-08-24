@@ -52,6 +52,11 @@ env:
   VITE_FIREBASE_APP_ID: ${{ secrets.VITE_FIREBASE_APP_ID }}
   VITE_GOOGLE_CLIENT_ID: ${{ secrets.VITE_GOOGLE_CLIENT_ID }}
   GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+  # Not sensitive, so a repository variable (Settings > Secrets and variables >
+  # Actions > Variables) rather than a secret. Empty/unset resolves to 'local'
+  # (today's proxied-through-the-app behavior) -- see deployBackendImage in
+  # scripts/deploy-source-helper.js.
+  AUDIO_STORE_DRIVER: ${{ vars.AUDIO_STORE_DRIVER }}
 
 jobs:
   deploy:

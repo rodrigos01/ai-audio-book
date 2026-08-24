@@ -82,7 +82,8 @@ router.get('/:chapterId/hls/playlist.m3u8', async (req, res) => {
       chapterId: req.params.chapterId,
       clientId: req.clientId,
       userId: req.userId,
-      queryParams: req.query
+      queryParams: req.query,
+      baseUrl: `${req.protocol}://${req.get('host')}`
     });
 
     res.setHeader('Content-Type', 'application/vnd.apple.mpegurl');
