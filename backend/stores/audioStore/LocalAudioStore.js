@@ -49,13 +49,6 @@ class LocalAudioStore {
   async getSectionAudioUrl({ chapterId, sectionIndex, baseUrl, queryString = '' }) {
     return `${baseUrl}/api/chapters/${chapterId}/hls/segment/${sectionIndex}${queryString}`;
   }
-
-  // There's no separate delivery URL to hand back here -- the proxy route
-  // above IS how local mode serves bytes, so streamHLSSegment should just
-  // stream them itself rather than redirect.
-  async getDirectUrl() {
-    return null;
-  }
 }
 
 module.exports = LocalAudioStore;

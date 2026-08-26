@@ -99,18 +99,14 @@ const handleSegmentRequest = async (req, res) => {
   req.on('close', () => { isClosed = true; });
 
   try {
-    const { redirectUrl, audioBuffer } = await chapterController.streamHLSSegment({
+    const audioBuffer = await chapterController.streamHLSSegment({
       chapterId: req.params.chapterId,
       sectionIndex: req.params.sectionIndex,
       clientId: req.clientId,
       userId: req.userId
     });
 
-    if (isClosed) {
-      // no-op
-    } else if (redirectUrl) {
-      res.redirect(302, redirectUrl);
-    } else {
+    if (!isClosed) {
       res.setHeader('Content-Type', 'audio/mpeg');
       res.setHeader('Content-Length', audioBuffer.length);
       res.setHeader('Accept-Ranges', 'bytes');

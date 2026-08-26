@@ -75,26 +75,6 @@ class GcsAudioStore {
     });
     return url;
   }
-
-  // Called by streamHLSSegment once it has already ensured the section is
-  // synthesized (cache hit or freshly generated) -- so unlike
-  // getSectionAudioUrl, no existence check is needed here. This is what lets
-  // a segment that started out as a proxy-route fallback (because it wasn't
-  // synthesized yet when the playlist was built) still end up served
-  // directly from GCS: the route redirects here instead of streaming bytes
-  // itself once generation finishes. Also sidesteps signed-URL expiry for a
-  // slow/weak-network client working through a long playlist, since this
-  // mints the URL at the moment the segment is actually requested rather
-  // than all at once when the playlist was built.
-  async getDirectUrl(sectionId) {
-    const file = this.bucket.file(this.getSectionObjectKey(sectionId));
-    const [url] = await file.getSignedUrl({
-      version: 'v4',
-      action: 'read',
-      expires: Date.now() + SIGNED_URL_TTL_MS,
-    });
-    return url;
-  }
 }
 
 module.exports = GcsAudioStore;
