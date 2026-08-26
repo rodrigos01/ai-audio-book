@@ -52,13 +52,22 @@ class GcsAudioStore {
     }
   }
 
-  // baseUrl/chapterId/sectionIndex are ignored here — the signed URL points
-  // straight at the object in GCS, so playback bypasses the app entirely.
+  // Signed URLs point straight at GCS, bypassing the app -- which also means
+  // bypassing streamHLSSegment's lazy "synthesize on first request" fallback.
+  // So a section that hasn't been synthesized yet has no object to sign a URL
+  // for; fall back to the app's own proxy route (same shape LocalAudioStore
+  // always returns) so it still gets generated on first play. Once a section
+  // is cached, later playlist requests get the direct, app-bypassing URL.
   // Requires the runtime service account to hold roles/iam.serviceAccountTokenCreator
   // on itself (V4 signing on Cloud Run goes through the IAM signBlob API since
   // there's no local private key).
-  async getSectionAudioUrl({ section }) {
+  async getSectionAudioUrl({ section, chapterId, sectionIndex, baseUrl, queryString = '' }) {
     const file = this.bucket.file(this.getSectionObjectKey(section.id));
+    const [exists] = await file.exists();
+    if (!exists) {
+      return `${baseUrl}/api/chapters/${chapterId}/hls/segment/${sectionIndex}${queryString}`;
+    }
+
     const [url] = await file.getSignedUrl({
       version: 'v4',
       action: 'read',
