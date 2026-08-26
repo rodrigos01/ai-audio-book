@@ -4,6 +4,7 @@ const { breakContentIntoSections, splitSSMLIntoSections, buildSectionItems } = r
 const { deleteChapterSections, synthesizeAndCacheSection } = require('../services/ttsService');
 const { debugLog } = require('../services/logger');
 const { NotFoundError, ForbiddenError } = require('../utils/errors');
+const admin = require('../firebase-config');
 
 class ChapterController {
   async updateChapter({ id, name, content, is_ssml, clientId, userId }) {
@@ -13,7 +14,13 @@ class ChapterController {
     const updateData = {};
     if (name !== undefined) updateData.name = name;
     if (is_ssml !== undefined) updateData.is_ssml = is_ssml;
-    if (content !== undefined) updateData.content = content;
+    if (content !== undefined) {
+      updateData.content = content;
+      // Content changed and sections are about to be regenerated from
+      // scratch below -- any prior TTS failure recorded against the old
+      // sections is now stale.
+      updateData.audio_synthesis_status = admin.firestore.FieldValue.delete();
+    }
 
     await firestoreStore.updateChapter(id, updateData);
 

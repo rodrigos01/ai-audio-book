@@ -1,10 +1,11 @@
 const textToSpeech = require('@google-cloud/text-to-speech');
 const fs = require('fs');
 const path = require('path');
-const { debugLog } = require('./logger');
+const { debugLog, logError } = require('./logger');
 const audioStore = require('../stores/audioStore');
 const firestoreStore = require('../stores/firestoreStore');
 const admin = require('../firebase-config');
+const { classifyTtsError } = require('../utils/ttsErrorClassifier');
 
 const SILENT_MP3 = Buffer.from('//uQxAAAAAAAAAAAAAAAAAAAAAAAWGluZwAAAA8AAAACAAACcQCAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICA/wAAAP8AAAD/AAAA/wAAAP8AAAD/AAAA/wAAAP8AAAD/AAAA/wAAAP8AAAD/AAAA/wAAAP8AAAD/AAAA/wAAAP8AAAAA', 'base64');
 // A real ~1s silent clip synthesized through this same TTS pipeline (MP3,
@@ -334,6 +335,11 @@ async function synthesizeAndCacheSection(title, chapter, section) {
         debugLog(`[TTS Safety Retry] Primary attempt failed for section ${section.id}: ${primaryErr.message}. Retrying with sanitized text...`);
         const retryRequest = sanitizeForContentViolation(request);
         [response] = await ttsClient.synthesizeSpeech(retryRequest);
+      } else if (classifyTtsError(primaryErr).retryable) {
+        const { code } = classifyTtsError(primaryErr);
+        console.warn(`[TTS Transient Retry] ${code} for section ${section.id}. Retrying once...`);
+        debugLog(`[TTS Transient Retry] ${code} for section ${section.id}: ${primaryErr.message}. Retrying once...`);
+        [response] = await ttsClient.synthesizeSpeech(request);
       } else {
         throw primaryErr;
       }
@@ -343,19 +349,28 @@ async function synthesizeAndCacheSection(title, chapter, section) {
     const elapsed = ((Date.now() - startTime) / 1000).toFixed(2);
 
     const audioPath = await audioStore.saveSectionAudio(section.id, audioBuffer);
-    await firestoreStore.updateSection(section.id, { status: 'generated', audio_file_path: audioPath });
+    await firestoreStore.updateSection(section.id, {
+      status: 'generated',
+      audio_file_path: audioPath,
+      synthesis_failed: admin.firestore.FieldValue.delete(),
+      error_code: admin.firestore.FieldValue.delete(),
+      error_message: admin.firestore.FieldValue.delete()
+    });
     const msgSuccess = `[TTS Success] Section ${section.id} completed in ${elapsed}s (${audioBuffer.length} bytes audio)`;
     console.log(msgSuccess);
     debugLog(msgSuccess);
     return audioBuffer;
   } catch (e) {
     const elapsed = ((Date.now() - startTime) / 1000).toFixed(2);
-    const msgError = `[TTS Error] Section ${section.id} failed after ${elapsed}s: ${e.message}`;
-    console.error(msgError);
-    console.error(`[TTS Error Stack]`, e.stack);
-    if (e.details) console.error(`[TTS gRPC Details]`, e.details);
-    if (e.code) console.error(`[TTS gRPC Code]`, e.code);
-    debugLog(msgError);
+    const classified = classifyTtsError(e);
+    logError('tts-synthesis', e, {
+      section_id: section.id,
+      chapter_id: chapter.id,
+      title_id: title && title.id,
+      tts_error_code: classified.code,
+      is_pro_tier: isProTier,
+      elapsed_seconds: elapsed
+    });
 
     // A section that keeps failing synthesis (bad input, persistent safety
     // rejection, API outage) must not leave callers waiting on a promise
@@ -368,7 +383,16 @@ async function synthesizeAndCacheSection(title, chapter, section) {
     debugLog(`[TTS Fallback] Caching silent audio for section ${section.id} after synthesis failure`);
     try {
       const audioPath = await audioStore.saveSectionAudio(section.id, SILENT_MP3_1S);
-      await firestoreStore.updateSection(section.id, { status: 'generated', audio_file_path: audioPath });
+      await firestoreStore.updateSection(section.id, {
+        status: 'generated',
+        audio_file_path: audioPath,
+        synthesis_failed: true,
+        error_code: classified.code,
+        error_message: String(e.message || '').slice(0, 500),
+        error_at: admin.firestore.FieldValue.serverTimestamp(),
+        synthesis_attempts: admin.firestore.FieldValue.increment(1)
+      });
+      await firestoreStore.updateChapter(chapter.id, { audio_synthesis_status: 'error' });
     } catch (fallbackErr) {
       // Even caching/marking the fallback failed -- still must not leave the
       // caller hanging. It just won't be cached, so the next request retries
