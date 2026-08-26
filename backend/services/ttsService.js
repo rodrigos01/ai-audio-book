@@ -7,6 +7,12 @@ const firestoreStore = require('../stores/firestoreStore');
 const admin = require('../firebase-config');
 
 const SILENT_MP3 = Buffer.from('//uQxAAAAAAAAAAAAAAAAAAAAAAAWGluZwAAAA8AAAACAAACcQCAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICA/wAAAP8AAAD/AAAA/wAAAP8AAAD/AAAA/wAAAP8AAAD/AAAA/wAAAP8AAAD/AAAA/wAAAP8AAAD/AAAA/wAAAP8AAAAA', 'base64');
+// A real ~1s silent clip synthesized through this same TTS pipeline (MP3,
+// matching format), used as a fallback when synthesis itself fails -- see
+// the catch block in synthesizeAndCacheSection. Distinct from SILENT_MP3
+// above, which is a near-instant placeholder for sections with no
+// speakable text at all, not an error fallback.
+const SILENT_MP3_1S = fs.readFileSync(path.join(__dirname, '../assets/silent_1s.mp3'));
 
 let ttsClient;
 try {
@@ -350,7 +356,27 @@ async function synthesizeAndCacheSection(title, chapter, section) {
     if (e.details) console.error(`[TTS gRPC Details]`, e.details);
     if (e.code) console.error(`[TTS gRPC Code]`, e.code);
     debugLog(msgError);
-    throw new Error(`TTS synthesis failed for section ${section.id} after ${elapsed}s: ${e.message}`);
+
+    // A section that keeps failing synthesis (bad input, persistent safety
+    // rejection, API outage) must not leave callers waiting on a promise
+    // that never resolves in a reasonable time or turns into a dead end for
+    // an HLS segment that a player is blocking on. Cache a short silent clip
+    // in its place -- same as handleEmptySectionFallback's "no speakable
+    // text" case -- so it fails safe (skips ahead) instead of hanging, and
+    // doesn't retry (and re-fail) on every future request for this section.
+    console.error(`[TTS Fallback] Caching silent audio for section ${section.id} after synthesis failure`);
+    debugLog(`[TTS Fallback] Caching silent audio for section ${section.id} after synthesis failure`);
+    try {
+      const audioPath = await audioStore.saveSectionAudio(section.id, SILENT_MP3_1S);
+      await firestoreStore.updateSection(section.id, { status: 'generated', audio_file_path: audioPath });
+    } catch (fallbackErr) {
+      // Even caching/marking the fallback failed -- still must not leave the
+      // caller hanging. It just won't be cached, so the next request retries
+      // real synthesis instead of reusing this silent clip.
+      console.error(`[TTS Fallback Error] Failed to cache silent audio for section ${section.id}: ${fallbackErr.message}`);
+      debugLog(`[TTS Fallback Error] Failed to cache silent audio for section ${section.id}: ${fallbackErr.message}`);
+    }
+    return SILENT_MP3_1S;
   }
 }
 
