@@ -173,7 +173,17 @@ class ChapterController {
     const audioBuffer = await audioStore.readSectionAudio(section.id)
       || await synthesizeAndCacheSection(title, chapter, section);
 
-    return audioBuffer;
+    // The section is now guaranteed to be cached (just read or just
+    // synthesized). If the store can hand back a direct delivery URL (GCS),
+    // redirect there instead of proxying the bytes ourselves -- this is what
+    // gets a segment off the app even when it started out as a proxy-route
+    // fallback because it wasn't ready yet when the playlist was built.
+    const redirectUrl = await audioStore.getDirectUrl(section.id);
+    if (redirectUrl) {
+      return { redirectUrl };
+    }
+
+    return { audioBuffer };
   }
 }
 
