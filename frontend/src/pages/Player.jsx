@@ -277,7 +277,21 @@ export default function Player() {
     } else if (Hls.isSupported()) {
       hls = new Hls({
         enableWorker: true,
-        lowLatencyMode: false
+        lowLatencyMode: false,
+        // Buffer the whole (VOD, single-rendition) chapter ahead rather than
+        // stopping at the ~30s default, so a spotty connection has already
+        // fetched what it needs before it drops.
+        maxBufferLength: 3600,
+        maxMaxBufferLength: 3600,
+        maxBufferSize: Infinity,
+        backBufferLength: Infinity,
+        // A segment that hasn't been synthesized yet blocks on a live TTS
+        // call before the server sends anything at all -- measured up to
+        // ~17s for a single ~29s section, and worse when a content-safety
+        // retry doubles the TTS call. The 20s default here is too tight for
+        // that; give it real headroom instead of racing it.
+        fragLoadingTimeOut: 90000,
+        fragLoadingMaxRetry: 4
       });
       hls.loadSource(hlsUrl);
       hls.attachMedia(audio);
