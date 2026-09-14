@@ -43,10 +43,10 @@ const request = async (url, options = {}, token = null) => {
 };
 
 export const api = {
-  createTitle: async (name, aiCastingEnabled, ttsTier = 'basic', narratorVoice = null, token) => {
+  createTitle: async (name, aiCastingEnabled, ttsTier = 'basic', narratorVoice = null, language = 'English', token) => {
     const res = await request(`${API_BASE}/titles`, {
       method: 'POST',
-      body: JSON.stringify({ name, ai_casting_enabled: aiCastingEnabled, tts_tier: ttsTier, narrator_voice: narratorVoice })
+      body: JSON.stringify({ name, ai_casting_enabled: aiCastingEnabled, tts_tier: ttsTier, narrator_voice: narratorVoice, language })
     }, token);
     if (!res.ok) throw new Error('Failed to create title');
     return res.json();
@@ -75,7 +75,8 @@ export const api = {
         voice_id: contentOrPayload.voiceId,
         name: contentOrPayload.name,
         google_doc_id: contentOrPayload.googleDocId,
-        google_access_token: contentOrPayload.googleAccessToken
+        google_access_token: contentOrPayload.googleAccessToken,
+        skip_script_generation: contentOrPayload.skipScriptGeneration
       };
       authToken = voiceId; // 3rd arg is token when 2nd arg is payload
     } else {
