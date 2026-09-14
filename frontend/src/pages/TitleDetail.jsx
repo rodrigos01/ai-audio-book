@@ -31,6 +31,7 @@ export default function TitleDetail() {
   const [castingMap, setCastingMap] = useState({}); // { "Character": "voice-id" }
   const [changingCharacter, setChangingCharacter] = useState(null); // Character name being changed
   const [showAddDialog, setShowAddDialog] = useState(false);
+  const [skipScriptGeneration, setSkipScriptGeneration] = useState(false);
   const [showImportMenu, setShowImportMenu] = useState(false);
   const [error, setError] = useState(null);
   const fileInputRef = useRef(null);
@@ -184,22 +185,20 @@ export default function TitleDetail() {
       const firebaseToken = await getToken();
       const voiceId = selectedVoice || voices[0]?.id;
 
+      const payload = { voiceId, name: chapterName, skipScriptGeneration };
       if (linkedDoc) {
         setSyncing(true);
-        const tokenToUse = googleAccessToken || sessionStorage.getItem('google_access_token');
-        await api.createChapter(id, {
-          googleDocId: linkedDoc.id,
-          googleAccessToken: tokenToUse,
-          voiceId,
-          name: chapterName
-        }, firebaseToken);
+        payload.googleDocId = linkedDoc.id;
+        payload.googleAccessToken = googleAccessToken || sessionStorage.getItem('google_access_token');
       } else {
-        await api.createChapter(id, newContent, voiceId, chapterName, firebaseToken);
+        payload.content = newContent;
       }
+      await api.createChapter(id, payload, firebaseToken);
 
       setChapterName('');
       setNewContent('');
       setLinkedDoc(null);
+      setSkipScriptGeneration(false);
       setShowAddDialog(false);
     } catch (err) {
       setError(err.message);
@@ -722,10 +721,19 @@ export default function TitleDetail() {
                     <div className="flex-col gap-4">
                     <span style={{ fontWeight: 500 }}>Narrator setup</span>
                     {title?.ai_casting_enabled ? (
+                        <>
                         <div style={{ padding: '1rem', borderRadius: '1rem', backgroundColor: 'var(--md-sys-color-primary-container)', color: 'var(--md-sys-color-on-primary-container)', display: 'flex', gap: '1rem', alignItems: 'center' }}>
                             <md-icon><span className="material-symbols-outlined">auto_awesome</span></md-icon>
                             <span style={{ fontSize: '0.9rem' }}>AI will automatically assign voices based on the text contents.</span>
                         </div>
+                        <label style={{ display: 'flex', gap: '0.75rem', alignItems: 'center', cursor: 'pointer', padding: '0 0.25rem' }}>
+                            <md-checkbox
+                                checked={skipScriptGeneration || undefined}
+                                onClick={() => setSkipScriptGeneration(!skipScriptGeneration)}
+                            ></md-checkbox>
+                            <span style={{ fontSize: '0.9rem' }}>Skip script formatting -- my text is already a formatted script (voices will still be auto-cast).</span>
+                        </label>
+                        </>
                     ) : (
                         <div style={{ backgroundColor: 'var(--md-sys-color-surface-container-low)', padding: '1rem', borderRadius: '1rem' }}>
                             <div className="flex-row" style={{ justifyContent: 'space-between', alignItems: 'center', marginBottom: '1rem' }}>

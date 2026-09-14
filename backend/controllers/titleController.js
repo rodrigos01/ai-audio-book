@@ -9,7 +9,7 @@ const { ValidationError, NotFoundError, UnauthorizedError } = require('../utils/
 const VOICES = require('../voices.json');
 
 class TitleController {
-  async createTitle({ name, ai_casting_enabled, tts_tier, narrator_voice, clientId, userId }) {
+  async createTitle({ name, ai_casting_enabled, tts_tier, narrator_voice, language, clientId, userId }) {
     if (!name) throw new ValidationError('Name is required');
     const id = uuidv4();
     const tier = tts_tier === 'pro' ? 'pro' : 'basic';
@@ -19,14 +19,15 @@ class TitleController {
       ai_casting_enabled: !!ai_casting_enabled,
       tts_tier: tier,
       narrator_voice: narrator_voice || null,
+      language: language || 'English',
       casting_map: {},
       client_id: clientId,
       user_id: userId
     });
-    return { id, name, ai_casting_enabled: !!ai_casting_enabled, tts_tier: tier, narrator_voice: narrator_voice || null };
+    return { id, name, ai_casting_enabled: !!ai_casting_enabled, tts_tier: tier, narrator_voice: narrator_voice || null, language: language || 'English' };
   }
 
-  async updateTitle({ id, name, casting_map, narrator_voice, clientId, userId }) {
+  async updateTitle({ id, name, casting_map, narrator_voice, language, clientId, userId }) {
     const title = await firestoreStore.getTitle(id, clientId, userId);
     if (!title) throw new NotFoundError('Title not found');
 
@@ -34,6 +35,7 @@ class TitleController {
     if (name !== undefined) updateData.name = name;
     if (casting_map !== undefined) updateData.casting_map = casting_map;
     if (narrator_voice !== undefined) updateData.narrator_voice = narrator_voice;
+    if (language !== undefined) updateData.language = language;
 
     await firestoreStore.updateTitle(id, updateData);
 
@@ -90,7 +92,7 @@ class TitleController {
     return { success: true, claimed_count: count };
   }
 
-  async addChapter({ titleId, content, voice_id, name, google_doc_id, google_access_token, clientId, userId }) {
+  async addChapter({ titleId, content, voice_id, name, google_doc_id, google_access_token, skip_script_generation, clientId, userId }) {
     let finalContent = content;
     let finalName = name;
 
@@ -129,7 +131,13 @@ class TitleController {
     });
 
     if (isAiCasting) {
-      this._processAiCastingInBackground({ chapterId, titleId, finalContent, title }).catch(err => {
+      this._processAiCastingInBackground({
+        chapterId,
+        titleId,
+        finalContent,
+        title,
+        skipScriptGeneration: !!skip_script_generation
+      }).catch(err => {
         debugLog(`Unhandled background AI casting error for chapter ${chapterId}: ${err.message}`);
       });
       return { id: chapterId, title_id: titleId, order_index: orderIndex, name: finalName || null, ai_casting_status: 'in_progress' };
@@ -144,24 +152,25 @@ class TitleController {
     return { id: chapterId, title_id: titleId, order_index: orderIndex, name: finalName || null, ai_casting_status: null };
   }
 
-  async _processAiCastingInBackground({ chapterId, titleId, finalContent, title }) {
+  async _processAiCastingInBackground({ chapterId, titleId, finalContent, title, skipScriptGeneration = false }) {
     try {
       const tier = title.tts_tier || 'basic';
-      debugLog(`AI Casting background (${tier}): Auto-casting new chapter ${chapterId} for ${title.name}`);
+      debugLog(`AI Casting background (${tier}): Auto-casting new chapter ${chapterId} for ${title.name}${skipScriptGeneration ? ' (script generation skipped)' : ''}`);
       const existingCast = title.casting_map || {};
       const existingNarrator = title.narrator_voice || null;
       const existingPersonalities = title.character_personalities || {};
       const existingNarratorPersonality = title.narrator_personality || null;
 
-      const result = await aiCasting.analyzeChapter(
-        finalContent,
+      const result = await aiCasting.analyzeChapter(finalContent, {
         existingCast,
-        VOICES,
+        voiceList: VOICES,
         existingNarrator,
         tier,
         existingPersonalities,
-        existingNarratorPersonality
-      );
+        existingNarratorPersonality,
+        language: title.language || 'English',
+        skipScriptGeneration
+      });
 
       const titleUpdate = { casting_map: result.updated_cast };
       if (!title.narrator_voice) titleUpdate.narrator_voice = result.narrator_voice;
@@ -175,15 +184,18 @@ class TitleController {
       }
       await firestoreStore.updateTitle(titleId, titleUpdate);
 
-      const processedContent = result.ssml;
+      const processedContent = skipScriptGeneration ? finalContent : result.ssml;
       const voiceId = result.narrator_voice;
-      const isSSML = tier === 'basic';
+      const isSSML = skipScriptGeneration
+        ? processedContent.trim().toLowerCase().startsWith('<speak')
+        : tier === 'basic';
 
       await firestoreStore.updateChapter(chapterId, {
         content: processedContent,
         voice_id: voiceId,
         is_ssml: isSSML,
-        ai_casting_status: 'completed'
+        ai_casting_status: 'completed',
+        delivery_instruction: result.delivery_instruction || null
       });
 
       const sections = isSSML

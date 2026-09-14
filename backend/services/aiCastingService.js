@@ -26,7 +26,18 @@ class AICastingService {
         };
     }
 
-    async analyzeChapter(chapterText, existingCast = {}, voiceList = [], existingNarrator = null, tier = 'basic', existingPersonalities = {}, existingNarratorPersonality = null) {
+    async analyzeChapter(chapterText, options = {}) {
+        const {
+            existingCast = {},
+            voiceList = [],
+            existingNarrator = null,
+            tier = 'basic',
+            existingPersonalities = {},
+            existingNarratorPersonality = null,
+            language = 'English',
+            skipScriptGeneration = false,
+        } = options;
+
         if (!process.env.GEMINI_API_KEY) {
             throw new Error("Gemini API key is missing. Please configure it in your environment.");
         }
@@ -74,9 +85,11 @@ class AICastingService {
             3. For characters in the "Current Title Cast", you MUST reuse their assigned voice ID and personality.
             4. For new characters, assign a voice from the "Available Voices" that matches their characteristics, personality, and gender.
             5. Assign a Narrator voice, if one was not assigned yet. If the text is a first-person narrative, use the same voice as the main character.
-            7. For each character and the Narrator, provide a succinct description of how they should sound (e.g. "Inquisitive, articulate host with warm tone", "Calm, steady storyteller with gentle warmth") in the "personality" and "narrator_personality" fields. 
-            8. If a character is described as having a specific accent, or as coming from a specific country or region, you must include it in the personality description. 
+            6. The chapter text is written in ${language}. Character names and the "personality"/"narrator_personality" descriptions must also be written in ${language}.
+            7. For each character and the Narrator, provide a succinct description of how they should sound (e.g. "Inquisitive, articulate host with warm tone", "Calm, steady storyteller with gentle warmth") in the "personality" and "narrator_personality" fields.
+            8. If a character is described as having a specific accent, or as coming from a specific country or region, you must include it in the personality description.
             9. If the narrator is the main character, they should have identical personalities.
+            10. Provide a "delivery_instruction": a single, succinct, chapter-wide directive describing the overall tone, genre, and pacing this entire chapter should be performed in (e.g. "Tense noir mystery -- slow pace, dramatic pauses", "Lighthearted children's bedtime story -- warm, gentle pacing", "Neutral technical documentation -- clear, even pacing"). This is shown to the voice performer before every character personality, so keep it general to the whole chapter rather than any single character.
 
             ### Chapter Text:
             ${chapterText}
@@ -110,9 +123,13 @@ class AICastingService {
                 narrator_personality: {
                     type: "string",
                     description: "Succinct description of how the narrator should sound"
+                },
+                delivery_instruction: {
+                    type: "string",
+                    description: "A succinct, chapter-wide directive describing the overall tone, genre, and pacing this chapter should be performed in"
                 }
             },
-            required: ["updated_cast", "narrator_voice", "narrator_personality"]
+            required: ["updated_cast", "narrator_voice", "narrator_personality", "delivery_instruction"]
         };
 
         const castingResult = await this.genAI.models.generateContent({
@@ -134,9 +151,9 @@ class AICastingService {
             return acc;
         }, {});
 
-        let formattedOutput = '';
+        let formattedOutput = null;
 
-        if (tier === 'pro') {
+        if (!skipScriptGeneration && tier === 'pro') {
             const proPrompt = `
                 ### Task: Phase 2 - Natural Language Multi-Speaker Script
                 Using the provided casting map, rewrite the chapter text into a Gemini-TTS-optimised multi-speaker script. Make sure the entire text is included in the output.
@@ -149,6 +166,7 @@ class AICastingService {
                 2. Use the character names from the casting map as the SpeakerAlias.
                 3. Strip short dialogue attributions ("[pronoun] said.") ONLY IF they don't add visual or explanatory context to the scene.
                 4. Add acting queues in parentheses for any non-verbal sounds, actions, or emotions that should be conveyed in the audio performance (e.g. "(sighs)", "(laughs)", "(angrily)").
+                5. The chapter text is written in ${language}. Keep the rewritten script in ${language} -- do not translate it.
 
                 ### Chapter Text:
                 ${chapterText}
@@ -159,7 +177,7 @@ class AICastingService {
                 contents: proPrompt,
             });
             formattedOutput = proResult.text;
-        } else {
+        } else if (!skipScriptGeneration) {
             const ssmlPrompt = `
                 ### Task: Phase 2 - SSML Generation & Dramatic Rewriting
                 Using the provided casting map, rewrite the chapter text into a high-quality SSML script. Make sure the entire text is included in the SSML output
@@ -174,6 +192,7 @@ class AICastingService {
                 4. Strip short dialogue attributions ("[pronoun] said.") ONLY IF they don't add visual or explanatory context to the scene
                 5. Each <voice> tag must be contained WITHIN a <p> tag. Do not span <voice> tags across multiple paragraphs.
                 6. Identify words that require special pronunciation and wrap them in <phoneme alphabet="ipa" ph="..."> tags.
+                7. The chapter text is written in ${language}. Keep the rewritten SSML content in ${language} -- do not translate it.
 
                 ### Chapter Text:
                 ${chapterText}
@@ -192,6 +211,7 @@ class AICastingService {
             ssml: formattedOutput,
             narrator_voice: castingResponse.narrator_voice,
             narrator_personality: castingResponse.narrator_personality || null,
+            delivery_instruction: castingResponse.delivery_instruction || null,
         };
     }
 }

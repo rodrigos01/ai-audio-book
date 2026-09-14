@@ -11,6 +11,7 @@ router.post('/', async (req, res) => {
       ai_casting_enabled: req.body.ai_casting_enabled,
       tts_tier: req.body.tts_tier,
       narrator_voice: req.body.narrator_voice,
+      language: req.body.language,
       clientId: req.clientId,
       userId: req.userId
     });
@@ -27,6 +28,7 @@ router.patch('/:id', authMiddleware, async (req, res) => {
       name: req.body.name,
       casting_map: req.body.casting_map,
       narrator_voice: req.body.narrator_voice,
+      language: req.body.language,
       clientId: req.clientId,
       userId: req.userId
     });
@@ -58,6 +60,7 @@ router.post('/:id/chapters', authMiddleware, async (req, res) => {
       name: req.body.name,
       google_doc_id: req.body.google_doc_id,
       google_access_token: req.body.google_access_token,
+      skip_script_generation: req.body.skip_script_generation,
       clientId: req.clientId,
       userId: req.userId
     });

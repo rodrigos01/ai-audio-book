@@ -5,11 +5,18 @@ import { useAuth } from '../context/AuthContext';
 import { db } from '../lib/firebase';
 import { collection, query, where, onSnapshot } from 'firebase/firestore';
 
+const LANGUAGES = [
+  'English', 'Spanish', 'French', 'German', 'Italian', 'Portuguese', 'Dutch', 'Russian',
+  'Japanese', 'Korean', 'Chinese', 'Arabic', 'Hindi', 'Polish', 'Turkish', 'Vietnamese',
+  'Thai', 'Indonesian', 'Romanian', 'Ukrainian', 'Bengali', 'Tamil', 'Telugu', 'Marathi'
+];
+
 export default function Home() {
   const [titles, setTitles] = useState([]);
   const [newTitleName, setNewTitleName] = useState('');
   const [aiCastingEnabled, setAiCastingEnabled] = useState(false);
   const [ttsTier, setTtsTier] = useState('basic'); // 'basic' | 'pro'
+  const [language, setLanguage] = useState('English');
   const [voices, setVoices] = useState([]);
   const [selectedVoice, setSelectedVoice] = useState('');
   const [loading, setLoading] = useState(true);
@@ -71,10 +78,11 @@ export default function Home() {
     if (!newTitleName.trim()) return;
     try {
       const token = await getToken();
-      await api.createTitle(newTitleName, aiCastingEnabled, ttsTier, selectedVoice, token);
+      await api.createTitle(newTitleName, aiCastingEnabled, ttsTier, selectedVoice, language, token);
       setNewTitleName('');
       setAiCastingEnabled(false);
       setTtsTier('basic');
+      setLanguage('English');
     } catch (e) {
       console.error(e);
     }
@@ -212,6 +220,29 @@ export default function Home() {
                   <option key={v.id} value={v.id}>
                     {v.name} ({v.gender} - {v.style})
                   </option>
+                ))}
+              </select>
+            </div>
+
+            {/* Language Dropdown */}
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '0.35rem', flex: '1 1 240px' }}>
+              <label style={{ fontSize: '0.8rem', fontWeight: 600, color: 'var(--md-sys-color-on-surface-variant)' }}>Language</label>
+              <select
+                value={language}
+                onChange={(e) => setLanguage(e.target.value)}
+                style={{
+                  height: '44px',
+                  padding: '0 0.75rem',
+                  borderRadius: '0.75rem',
+                  backgroundColor: 'var(--md-sys-color-surface-container-high)',
+                  color: 'var(--md-sys-color-on-surface)',
+                  border: '1px solid var(--md-sys-color-outline-variant)',
+                  fontSize: '0.9rem',
+                  cursor: 'pointer'
+                }}
+              >
+                {LANGUAGES.map(lang => (
+                  <option key={lang} value={lang}>{lang}</option>
                 ))}
               </select>
             </div>
