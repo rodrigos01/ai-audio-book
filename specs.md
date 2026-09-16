@@ -1,0 +1,94 @@
+# AI Podcast API
+This is the rest API for the AI Podcast app, which utilizes LLMs and LLM-based TTS services to generate realistic podcasts from sources provided by the user.
+
+## Basic Product Specifications
+### Podcasts and Episodes
+Users will be able to create Podcast shows and episodes for those shows. A Podcast will have a Theme, A Structure and one or more fixed hosts. An Episode will have one or more topics and can receive guests. Hosts will remember previous episodes.
+
+### Podcast Structure
+Each created podcast will have a unique structure decided by the user that will make sense with the theme and premise of the show. That structure can be anything that defines how the episodes will be built, from specific blocks all episodes will have to wether episodes will have guests and what are the hosts and guests role in each episode.
+
+### Pre Production Material
+Users will be able to upload sources to be used as pre-production material for each episode. Hosts and guests will all be provided with these sources before the show starts.
+
+### Realistic talk
+Episodes will aim for realistic talk by making each speaker an independent individual, only having the knowledge of the pre-production material in common with the others
+
+### Hosts and Guests
+All hosts and guests of these podcasts will be fictional but should have life-like personas that make them relevant for the topics the podcasts and episodes will touch upon.
+
+## Podcast Creation Experience
+Users will be able to create podcasts, and then episodes, by following a wizard-like step-by-step flow
+
+### Creating Podcasts
+
+1. User inputs an initial prompt for what they want the podcast to be like and, optionally, sample source material they would like to use
+2. The app suggests 3 options for the podcast. Each option will have a name, a short descritpion, a structure and the hosts' details. Each option will be accompained by 3 predicted changes the user might want to make to them.
+    2.a. The User might choose to modify one of the sugested options, either by choosing one of the predicted changes or by inputing a new one themselves. In this case, the app will re-generate that option based on the response.
+    
+    2.b. The user might choose to revise all options by inputing their revision instead of choosing one of them. In this case, the app will re-generate all options based on the response
+3. Users will be able to change all aspects of the podcast by editing the name, the description, the structure and each of the hosts names and voices
+4. When the user makes the final confirmation on an option, that will be committed to the Database as the podcast
+
+### Editing Podcasts
+After the podcast is created, users will still bew able to modify it the same way they could on step 3 of the creation process. Changes to the podcast will only take effect on future episodes.
+
+### Episode Creation
+1. User uploads the material the episode should focus on and optionally adds a prompt on how the material should be aproached. Users can also select from previously uploaded material in the same podcast.
+2. The app suggests the initial episode title, topics, and prodiction notes, based on the user's material and prompt, along with any guests the episode might have. The app will also provide 3 predicted changes the user might want to make to the episode.
+    2.a. If the user decides to make any changes, either by selecting one of the predicted ones or inputing their own, the app will re-generate the episode based on the response.
+3. Users will be able to edit the episode information before it's created by editing the title, topics, produiction notes and each of the guests.
+4. When the user makes the final confirmation on the episode the app will begin the generation process (See Episode generation on the technical specifications)
+
+## Technical Specifications
+
+### Database
+The app will use Firebase Firestore as its database with the following structure:
+
+- Podcasts
+    - id
+    - Title
+    - **description** - A brief description of the podcast, to be used as context for episode generation and for displaying on clients
+    - **structure** - A textual description (in markdown format) of how each episode of this podcast is structured
+    - hosts (nested array):
+        - name
+        - **voice** - Voice ID from the TTS service
+        - **persona** - A description of the character created for this host
+    - episodes (nested array):
+        - id
+        - Title
+        - **topics** - A textual description of the topics of this show.
+        - **Length** - The expected lenght range of the episode, an enum of short, medium and long
+        - **sources** - (nested array of the source_ids used in this episode)
+        - **Guests**  (Nested Array, same structure as hosts)
+        - **Production Notes** - Directional information for the hosts on how this episode should be driven
+        - **TTS Prompt** - The base prompt that will be sent to the TTS services to generate audio.
+        - **Transcript** - A Transcript of the episode, which will be used by the TTS services to generate the audio.
+    - sources (nested array)
+        - id
+        - title
+        - contents
+
+### Episode Generation
+This app will aim for maximum realism by making use of multiple LLMs to generate an episode's transcript.
+* **Hosts and Guests:** Each host and guest in an episode will be controlled by an individual LLM agent. All agents will be provided with the podcast and episode information as context, including the source material selected. Hosts will also be provided with condensed past episodes' transcript for continuity. Due to TTS limitations, each episode can only have 2 voices, being either 2 hosts or 1 host and one guest
+* **Realistic Conversation:** 
+    * **Kickoff**: The Episode's host (or one of them, decided randomly, if the podcast has more than one), will start the episode following the podcast's structure and the production notes
+    * **Conversation Rounds:** The other host, or the guest, will then respond to what the previous speaker said. And may or may not prompt a follow up response from the other. The other speaker will then respond if needed, or move the episode along in its program. Even if the second speaker has prompted a response, the first one might choose to quickly address it and still move the conversation along, in the interest of time.
+* **Episode duration:** Episodes will aim for a range of spoken words that will losely correspond to a target time, based on their expected lenghts. Hosts will be the ones responsible by keeping this range, but both hosts and guests will be aware of the limits and the current word count as they speak.
+    * short: 3500 to 5000 words, approximately 20 to 35 minutes.
+    * medium: 6500 to 8000 words, approximately 40 to 50 minutes
+    * long: 9000 words max, approximately a little over one hour.
+* **Transcript production:** The Episode's transcript will be created by concatenating all the speaker's speeches in the order they were generated, following the prompting-guide.md on how to format audio tags.
+* **Prompt Generation** The producer (another independent LLM) will take the full transcript and generate a base TTS prompt based on the documentation on the prompting-guide. The app will then break the transcript down into chunks that can be sent to the TTS service based on its defined token limit per submission. The combination of the base prompt plus the transcript chunk must be under the limit.
+
+### Audio Delivery
+* **Generation:** Audio will be generated by sending one prompt for each transcript chunk plus the base prompt to the TTS service. Audio generation will happen on-demand, as the user listens to the episode, using the TTS service's stream capabilities and be streamed back.
+* **Delivery:** Audio will be available to consumers of the API through a `/stream` enpoint that should be compatible with standard client web and mobile audio players
+* **Playback:** The players should be able to pause and resume the audio while streaming, but not scrubble through it before the generation of all chunks has completed. Once all audio for all chunks have been generated, playback should behave like a normal audio file.
+
+### Technical Stack
+The app will use the latest Gemini (`'@google/genai'`) models for all its LLM needs:
+* Text Generation: gemini-3.8-flash
+* TTS: gemini-3.1-flash-tts-preview
+

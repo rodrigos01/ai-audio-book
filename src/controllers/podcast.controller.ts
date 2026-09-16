@@ -1,0 +1,61 @@
+import type { Request, Response } from "express";
+import {
+  createPodcast,
+  deletePodcast,
+  getPodcast,
+  listPodcasts,
+  updatePodcast,
+} from "../data/podcast.repository";
+import { podcastCreateSchema, podcastUpdateSchema } from "../schemas/podcast.schema";
+import {
+  podcastWizardOptionsRequestSchema,
+  podcastWizardReviseRequestSchema,
+} from "../schemas/wizard.schema";
+import * as podcastWizardService from "../services/podcastWizard.service";
+import { HttpError } from "../utils/HttpError";
+import { requireParam } from "../utils/params";
+
+export async function create(req: Request, res: Response) {
+  const input = podcastCreateSchema.parse(req.body);
+  const podcast = await createPodcast(input);
+  res.status(201).json(podcast);
+}
+
+export async function list(_req: Request, res: Response) {
+  res.json(await listPodcasts());
+}
+
+export async function get(req: Request, res: Response) {
+  const podcast = await getPodcast(requireParam(req.params, "podcastId"));
+  if (!podcast) throw HttpError.notFound("Podcast not found");
+  res.json(podcast);
+}
+
+export async function update(req: Request, res: Response) {
+  const input = podcastUpdateSchema.parse(req.body);
+  const podcast = await updatePodcast(requireParam(req.params, "podcastId"), input);
+  if (!podcast) throw HttpError.notFound("Podcast not found");
+  res.json(podcast);
+}
+
+export async function remove(req: Request, res: Response) {
+  const deleted = await deletePodcast(requireParam(req.params, "podcastId"));
+  if (!deleted) throw HttpError.notFound("Podcast not found");
+  res.status(204).send();
+}
+
+export async function wizardOptions(req: Request, res: Response) {
+  const input = podcastWizardOptionsRequestSchema.parse(req.body);
+  const options = await podcastWizardService.generateOptions(input.prompt, input.sourceMaterial);
+  res.json({ options });
+}
+
+export async function wizardRevise(req: Request, res: Response) {
+  const input = podcastWizardReviseRequestSchema.parse(req.body);
+  const options = await podcastWizardService.reviseOptions(
+    input.options,
+    input.instruction,
+    input.targetIndex,
+  );
+  res.json({ options });
+}

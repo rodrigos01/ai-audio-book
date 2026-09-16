@@ -1,0 +1,21 @@
+rules_version = '2';
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+    
+    // Helper functions
+    function isSignedIn() {
+      return request.auth != null;
+    }
+    
+    function isOwner(data) {
+      return isSignedIn() && data.owner_id == request.auth.uid;
+    }
+
+    match /podcasts/{podcastId} {
+      allow read: if isOwner(resource.data);
+      allow create: if isSignedIn();
+      allow update, delete: if isOwner(resource.data);
+    }
+  }
+}
