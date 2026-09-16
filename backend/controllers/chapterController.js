@@ -5,6 +5,14 @@ const { deleteChapterSections, synthesizeAndCacheSection } = require('../service
 const { debugLog } = require('../services/logger');
 const { NotFoundError, ForbiddenError } = require('../utils/errors');
 
+// Observed narration pace: a ~6500-word chapter runs ~45 minutes of actual audio.
+const WORDS_PER_SECOND = 6500 / (45 * 60);
+// hls.js/ExoPlayer clip each segment's appended audio to the manifest's declared per-segment
+// (and cumulative total) duration, silently dropping any real audio buffered past it. So no
+// segment's declared #EXTINF may undershoot its actual synthesized length, and this padding
+// covers whatever estimate error remains, applied once to the chapter's final segment.
+const HLS_DURATION_PADDING_SECONDS = 120;
+
 class ChapterController {
   async updateChapter({ id, name, content, is_ssml, clientId, userId }) {
     const chapter = await firestoreStore.getChapterWithTitle(id, clientId, userId);
@@ -122,16 +130,23 @@ class ChapterController {
     if (queryParams.client_id) queryParts.push(`client_id=${encodeURIComponent(queryParams.client_id)}`);
     const queryString = queryParts.length > 0 ? `?${queryParts.join('&')}` : '';
 
-    let maxDuration = 1;
     const durations = sections.map((s) => {
+      const spokenText = (s.content || '').replace(/<[^>]*>/g, '').trim();
+      const wordCount = spokenText.length > 0 ? spokenText.split(/\s+/).length : 0;
+
       let dur = s.estimated_duration;
       if (dur == null || isNaN(dur) || dur <= 0) {
-        const spokenText = (s.content || '').replace(/<[^>]*>/g, '').trim();
         dur = spokenText.length > 0 ? spokenText.length / 14.5 + 0.5 : 0.5;
       }
-      if (dur > maxDuration) maxDuration = dur;
-      return dur;
+      // The char-based estimate above runs faster than real narration for many chapters;
+      // never declare less than the word-count heuristic calibrated from actual playback.
+      const wordsBasedDur = wordCount / WORDS_PER_SECOND;
+      return Math.max(dur, wordsBasedDur);
     });
+
+    // Add a fixed safety margin on top of the (already word-calibrated) total so the
+    // manifest's declared length still can't undershoot the real narration.
+    durations[durations.length - 1] += HLS_DURATION_PADDING_SECONDS;
 
     const segmentUrls = await Promise.all(sections.map((s, i) =>
       audioStore.getSectionAudioUrl({ section: s, chapterId, sectionIndex: i, baseUrl, queryString })
@@ -139,7 +154,7 @@ class ChapterController {
 
     const items = sections.map((s, i) => `#EXTINF:${durations[i].toFixed(3)},\n${segmentUrls[i]}`);
 
-    const targetDuration = Math.max(1, Math.ceil(maxDuration));
+    const targetDuration = Math.max(1, Math.ceil(Math.max(...durations)));
     const playlist = [
       '#EXTM3U',
       '#EXT-X-VERSION:3',
