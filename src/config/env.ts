@@ -14,6 +14,7 @@ const envSchema = z.object({
     .min(1, "FIREBASE_SERVICE_ACCOUNT_PATH is required"),
   FIREBASE_STORAGE_BUCKET: z.string().min(1, "FIREBASE_STORAGE_BUCKET is required"),
   FIRESTORE_DATABASE_ID: z.string().min(1).default("podcasts"),
+  AUDIOBOOKS_FIRESTORE_DATABASE_ID: z.string().min(1).default("audiobooks"),
 });
 
 const parsed = envSchema.safeParse(process.env);
