@@ -44,3 +44,23 @@ export function pcmToWav(pcmData: Buffer, sampleRate = 24000, channels = 1, bitD
 }
 
 export const WAV_HEADER_BYTES = 44;
+
+// The fixed PCM format Gemini TTS returns for this app's voices (confirmed
+// empirically — see AGENTS.md). Centralized here so time<->byte-offset
+// conversion for the /stream endpoint's `t=` query param doesn't duplicate
+// these numbers.
+export const PCM_FORMAT = { sampleRate: 24000, channels: 1, bitDepth: 16 } as const;
+
+const BLOCK_ALIGN = (PCM_FORMAT.channels * PCM_FORMAT.bitDepth) / 8;
+const BYTE_RATE = PCM_FORMAT.sampleRate * BLOCK_ALIGN;
+
+/**
+ * Converts a saved playback position (seconds) into the byte offset a
+ * `Range` request would use — so clients can resume by time without
+ * needing to know this app's PCM format. Aligned down to a whole sample
+ * (`BLOCK_ALIGN`) so a resumed stream never starts mid-sample.
+ */
+export function secondsToByteOffset(seconds: number): number {
+  const dataOffset = Math.floor((seconds * BYTE_RATE) / BLOCK_ALIGN) * BLOCK_ALIGN;
+  return WAV_HEADER_BYTES + Math.max(0, dataOffset);
+}

@@ -196,6 +196,8 @@ This is a single audio resource for the whole episode (not per-chunk), designed 
 - **While still generating**: served as `audio/wav` over `Transfer-Encoding: chunked` (no `Content-Length`, since the final size isn't known yet). Playback can start immediately and can be paused/resumed, but cannot be scrubbed ahead of what's actually been generated. A `Range: bytes=N-` request resumes precisely from `N` if that's already been generated; if not, it triggers generation of whatever's needed to reach it.
 - Audio generation is genuinely on-demand — the first request for a given episode's stream is what triggers TTS synthesis (in chunks, cached from then on), not episode confirmation. Expect real latency (tens of seconds per chunk) the first time any given episode is streamed.
 
+**Resuming from a saved position**: pass `?t=<seconds>` to start the stream from a playback position your app already has (e.g. the user exited the player and came back) — `GET .../audio/stream?t=754.2`. This is the recommended way to resume by time: the server converts it to the right byte offset internally, so your client never needs to know this app's underlying audio format. It behaves exactly like an equivalent `Range` byte-request (206 with `Content-Range` once the episode is fully generated; a chunked continuation, generating on demand, if not) — if a `Range` header is present on the same request, it takes precedence over `t`.
+
 ## Data model
 
 - **Podcast**: `title`, `description`, `structure` (markdown), `hosts[]` (each with `id`, `name`, `voice`, `persona`).
