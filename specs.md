@@ -42,12 +42,20 @@ After the podcast is created, users will still bew able to modify it the same wa
 
 ## Technical Specifications
 
+### Authentication
+The app authenticates users via Firebase Auth. Clients sign in directly with the Firebase Auth SDK (email/password, anonymous, or any other provider enabled on the project) and send the resulting ID token with every API request. This API never handles credentials itself, only verifies the token.
+
+Every endpoint operating on a podcast (and anything nested under it — sources, episodes, audio) requires a valid ID token. Each podcast is owned by the user who created it (see the `owner_id` field below), and a podcast belonging to another user is indistinguishable from one that doesn't exist at all — the same as attempting to access someone else's data returns a not-found response, never a distinct "forbidden" response, so existence isn't leaked. Reference/health endpoints that aren't user-scoped data do not require authentication.
+
+Because a standard web `<audio>` element cannot attach custom headers to the request it issues, the audio streaming endpoint additionally accepts the ID token as a query parameter, so it can be used directly as that element's `src`.
+
 ### Database
 The app will use Firebase Firestore as its database with the following structure:
 
 - Podcasts
     - id
     - Title
+    - **owner_id** - The id of the user who created this podcast, from Firebase Auth. Only this user may access the podcast or anything nested under it.
     - **description** - A brief description of the podcast, to be used as context for episode generation and for displaying on clients
     - **structure** - A textual description (in markdown format) of how each episode of this podcast is structured
     - hosts (nested array):

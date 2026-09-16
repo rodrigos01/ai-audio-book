@@ -1,46 +1,44 @@
 import type { Request, Response } from "express";
-import {
-  createPodcast,
-  deletePodcast,
-  getPodcast,
-  listPodcasts,
-  updatePodcast,
-} from "../data/podcast.repository";
+import { createPodcast, deletePodcast, listPodcasts, updatePodcast } from "../data/podcast.repository";
+import { requireUserId } from "../middleware/requireAuth";
 import { podcastCreateSchema, podcastUpdateSchema } from "../schemas/podcast.schema";
 import {
   podcastWizardOptionsRequestSchema,
   podcastWizardReviseRequestSchema,
 } from "../schemas/wizard.schema";
+import { requireOwnedPodcast } from "../services/podcastAccess";
 import * as podcastWizardService from "../services/podcastWizard.service";
 import { HttpError } from "../utils/HttpError";
 import { requireParam } from "../utils/params";
 
 export async function create(req: Request, res: Response) {
   const input = podcastCreateSchema.parse(req.body);
-  const podcast = await createPodcast(input);
+  const podcast = await createPodcast(input, requireUserId(req));
   res.status(201).json(podcast);
 }
 
-export async function list(_req: Request, res: Response) {
-  res.json(await listPodcasts());
+export async function list(req: Request, res: Response) {
+  res.json(await listPodcasts(requireUserId(req)));
 }
 
 export async function get(req: Request, res: Response) {
-  const podcast = await getPodcast(requireParam(req.params, "podcastId"));
-  if (!podcast) throw HttpError.notFound("Podcast not found");
+  const podcast = await requireOwnedPodcast(requireParam(req.params, "podcastId"), requireUserId(req));
   res.json(podcast);
 }
 
 export async function update(req: Request, res: Response) {
+  const podcastId = requireParam(req.params, "podcastId");
+  await requireOwnedPodcast(podcastId, requireUserId(req));
   const input = podcastUpdateSchema.parse(req.body);
-  const podcast = await updatePodcast(requireParam(req.params, "podcastId"), input);
+  const podcast = await updatePodcast(podcastId, input);
   if (!podcast) throw HttpError.notFound("Podcast not found");
   res.json(podcast);
 }
 
 export async function remove(req: Request, res: Response) {
-  const deleted = await deletePodcast(requireParam(req.params, "podcastId"));
-  if (!deleted) throw HttpError.notFound("Podcast not found");
+  const podcastId = requireParam(req.params, "podcastId");
+  await requireOwnedPodcast(podcastId, requireUserId(req));
+  await deletePodcast(podcastId);
   res.status(204).send();
 }
 

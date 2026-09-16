@@ -5,7 +5,7 @@ import type { Podcast, PodcastCreateInput, PodcastUpdateInput } from "../schemas
 
 const podcastsCollection = firestore.collection("podcasts");
 
-export async function createPodcast(input: PodcastCreateInput): Promise<Podcast> {
+export async function createPodcast(input: PodcastCreateInput, ownerId: string): Promise<Podcast> {
   const id = randomUUID();
   const now = Date.now();
   const podcast: Podcast = {
@@ -14,7 +14,7 @@ export async function createPodcast(input: PodcastCreateInput): Promise<Podcast>
     description: input.description,
     structure: input.structure,
     hosts: input.hosts.map((host) => ({ ...host, id: randomUUID() })),
-    ownerId: null,
+    ownerId,
     createdAt: now,
     updatedAt: now,
   };
@@ -27,9 +27,15 @@ export async function getPodcast(podcastId: string): Promise<Podcast | null> {
   return snap.exists ? (snap.data() as Podcast) : null;
 }
 
-export async function listPodcasts(): Promise<Podcast[]> {
+// Filtered in memory rather than a Firestore `where(ownerId==) + orderBy`
+// compound query, to avoid depending on a manually-provisioned composite
+// index — same reasoning as getRecentCondensedSummariesForHost, fine at
+// this app's expected scale (podcasts per user).
+export async function listPodcasts(ownerId: string): Promise<Podcast[]> {
   const snap = await podcastsCollection.orderBy("createdAt", "desc").get();
-  return snap.docs.map((doc) => doc.data() as Podcast);
+  return snap.docs
+    .map((doc) => doc.data() as Podcast)
+    .filter((podcast) => podcast.ownerId === ownerId);
 }
 
 export async function updatePodcast(

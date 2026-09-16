@@ -67,9 +67,23 @@ npm run smoke                 # scripts/smoke-test.ts — drives the full real H
 
 `npm test` is safe to run anytime. `npm run smoke` and any real usage of the wizard/generation/audio endpoints make real, billed calls to Gemini — be deliberate with how often you run a full episode through generation.
 
+## Authentication
+
+Every `/podcasts` route (including everything nested under it — sources, episodes, audio) requires a **Firebase Auth ID token**. This backend never handles credentials itself: your client signs in with the Firebase Auth SDK directly (email/password, anonymous, or any provider you enable on the project), then sends the resulting ID token on every request:
+
+```
+Authorization: Bearer <firebase-id-token>
+```
+
+For the one endpoint meant to be handed straight to a media player (`.../audio/stream`), a plain `<audio src="...">` can't attach custom headers — pass the token as a query param instead: `.../audio/stream?token=<firebase-id-token>`. The header is checked first if both are present.
+
+Podcasts (and everything under them) are private to the user who created them — a podcast that exists but belongs to someone else looks identical to a `404`.
+
+`/health` and `/voices` don't require auth.
+
 ## API reference
 
-All request/response bodies are JSON unless noted. There is currently **no authentication** — this is a single-user/local-dev-scoped service.
+All request/response bodies are JSON unless noted.
 
 ### Health & reference data
 
@@ -206,6 +220,6 @@ This is a single audio resource for the whole episode (not per-chunk), designed 
 
 ## Known limitations
 
-- No authentication — anyone with network access to the service can do anything.
 - No automatic resume if the process restarts mid-episode-generation; the transcript-so-far is preserved, but `/regenerate` restarts the whole conversation from scratch rather than continuing it.
+- `GET /podcasts` (list) scans every podcast in the database and filters by owner in memory, rather than a Firestore-indexed query — fine at today's scale, but worth revisiting if the number of users/podcasts grows significantly.
 - Every call to the wizard, episode generation, and audio endpoints makes real, billed calls to the Gemini API.
