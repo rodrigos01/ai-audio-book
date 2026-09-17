@@ -14,7 +14,6 @@
   "license": "ISC",
   "type": "commonjs",
   "dependencies": {
-    "@breezystack/lamejs": "^1.2.7",
     "@google-cloud/storage": "^8.0.1",
     "@google-cloud/text-to-speech": "^6.4.0",
     "@google/genai": "^1.50.1",
