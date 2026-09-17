@@ -1,5 +1,4 @@
 const textToSpeech = require('@google-cloud/text-to-speech');
-const { GoogleGenAI } = require('@google/genai');
 const fs = require('fs');
 const path = require('path');
 const { debugLog } = require('./logger');
@@ -7,16 +6,11 @@ const audioStore = require('../stores/audioStore');
 const firestoreStore = require('../stores/firestoreStore');
 const admin = require('../firebase-config');
 
-const GEMINI_TTS_MODEL = 'gemini-3.1-flash-tts-preview';
+const GEMINI_TTS_MODEL_NAME = 'gemini-3.1-flash-tts-preview';
 
-if (!process.env.GEMINI_API_KEY) {
-  debugLog('GEMINI_API_KEY not set. Pro-tier (Gemini) TTS synthesis will not work.');
-}
-const genAI = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
-
-// Human-readable title.language -> BCP-47 code understood by Gemini TTS's
-// speechConfig.languageCode. Missing/unrecognized languages omit the field
-// and let the model auto-detect from the prompt text instead.
+// Human-readable title.language -> BCP-47 code understood by the Gemini TTS
+// voice's languageCode field. Missing/unrecognized languages fall back to
+// 'en-US' and rely on the prompt-text language instruction instead.
 const GEMINI_LANGUAGE_CODES = {
   'English': 'en-US',
   'Spanish': 'es-US',
@@ -249,17 +243,12 @@ function resolvePersona(personalities, alias, fallback) {
   return key ? personalities[key] : fallback;
 }
 
-// Builds the single natural-language prompt (persona instructions + dialogue)
-// and speaker/voice configuration for a Gemini multi-speaker TTS request via
-// @google/genai -- simpler than the old @google-cloud/text-to-speech shape,
-// which split the same information across separate input.prompt/input.text
-// and voice.multiSpeakerVoiceConfig fields.
-function buildProSynthesisPlan(textContent, title, chapter) {
+function buildProRequest(textContent, title, chapter) {
   const castingMap = (title && title.casting_map) || {};
   const narratorVoice = (title && title.narrator_voice) || chapter.voice_id || 'Aoede';
   let speakerConfigs = extractSpeakerConfigsFromText(textContent, castingMap, narratorVoice);
 
-  // Guarantee Gemini TTS multi-speaker limit of max 2 distinct speakers per request
+  // Guarantee GCP Gemini TTS multi-speaker limit of max 2 distinct speakers per request
   if (speakerConfigs.length > 2) {
     speakerConfigs = speakerConfigs.slice(0, 2);
   }
@@ -267,13 +256,15 @@ function buildProSynthesisPlan(textContent, title, chapter) {
   const charPersonalities = (title && title.character_personalities) || (chapter && chapter.character_personalities) || {};
   const narratorPersona = (title && title.narrator_personality) || (chapter && chapter.narrator_personality) || "Calm, steady storyteller with clear tone";
   const deliveryInstruction = chapter && chapter.delivery_instruction;
+  const languageName = (title && title.language) || 'English';
+  const languageCode = getGeminiLanguageCode(languageName) || 'en-US';
 
   const promptLines = [];
   if (deliveryInstruction) {
     promptLines.push(deliveryInstruction, '');
   }
 
-  let dialogueText = textContent;
+  let performancePrompt;
 
   if (speakerConfigs.length >= 2) {
     promptLines.push("Synthesize speech according to these character personalities:", "", `Narrator: ${narratorPersona}`);
@@ -285,122 +276,46 @@ function buildProSynthesisPlan(textContent, title, chapter) {
         promptLines.push(`${alias}: ${persona}`);
       }
     }
-  } else {
-    let singlePersona = narratorPersona;
-    if (speakerConfigs.length === 1) {
-      const alias = speakerConfigs[0].speakerAlias;
-      if (alias.toLowerCase() !== 'narrator') {
-        const persona = resolvePersona(charPersonalities, alias, null);
-        if (persona) singlePersona = persona;
-      }
+
+    if (languageName.toLowerCase() !== 'english') {
+      promptLines.push(`The text below is written in ${languageName}; speak it naturally in ${languageName}.`);
     }
-    promptLines.push(`Synthesize speech according to this personality: ${singlePersona}`);
-    dialogueText = textContent.replace(/^([a-zA-Z0-9]+):\s*/gm, '').trim();
+    performancePrompt = promptLines.join('\n');
+
+    return {
+      input: { prompt: performancePrompt, text: textContent },
+      voice: {
+        languageCode,
+        modelName: GEMINI_TTS_MODEL_NAME,
+        multiSpeakerVoiceConfig: { speakerVoiceConfigs: speakerConfigs }
+      },
+      audioConfig: { audioEncoding: 'MP3' }
+    };
   }
 
-  const languageName = (title && title.language) || 'English';
+  let singlePersona = narratorPersona;
+  if (speakerConfigs.length === 1) {
+    const alias = speakerConfigs[0].speakerAlias;
+    if (alias.toLowerCase() !== 'narrator') {
+      const persona = resolvePersona(charPersonalities, alias, null);
+      if (persona) singlePersona = persona;
+    }
+  }
+
+  promptLines.push(`Synthesize speech according to this personality: ${singlePersona}`);
   if (languageName.toLowerCase() !== 'english') {
     promptLines.push(`The text below is written in ${languageName}; speak it naturally in ${languageName}.`);
   }
+  performancePrompt = promptLines.join('\n');
 
-  const promptText = [...promptLines, '', dialogueText].join('\n');
+  const singleVoice = speakerConfigs.length > 0 ? speakerConfigs[0].speakerId : toGeminiVoiceId(narratorVoice);
+  const cleanSingleSpeakerText = textContent.replace(/^([a-zA-Z0-9]+):\s*/gm, '').trim();
 
   return {
-    promptText,
-    speakerConfigs,
-    languageCode: getGeminiLanguageCode(languageName)
+    input: { prompt: performancePrompt, text: cleanSingleSpeakerText },
+    voice: { languageCode, modelName: GEMINI_TTS_MODEL_NAME, name: singleVoice },
+    audioConfig: { audioEncoding: 'MP3' }
   };
-}
-
-function buildSpeechConfig(speakerConfigs, languageCode) {
-  const speechConfig = {};
-  if (languageCode) speechConfig.languageCode = languageCode;
-
-  if (speakerConfigs.length >= 2) {
-    speechConfig.multiSpeakerVoiceConfig = {
-      speakerVoiceConfigs: speakerConfigs.map(c => ({
-        speaker: c.speakerAlias,
-        voiceConfig: { prebuiltVoiceConfig: { voiceName: c.speakerId } }
-      }))
-    };
-  } else {
-    const voiceName = speakerConfigs.length > 0 ? speakerConfigs[0].speakerId : 'Aoede';
-    speechConfig.voiceConfig = { prebuiltVoiceConfig: { voiceName } };
-  }
-
-  return speechConfig;
-}
-
-function extractAudioPart(result) {
-  const parts = (result && result.candidates && result.candidates[0] && result.candidates[0].content && result.candidates[0].content.parts) || [];
-  const audioPart = parts.find(p => p.inlineData && p.inlineData.mimeType && p.inlineData.mimeType.startsWith('audio/'));
-  if (!audioPart) {
-    const finishReason = result && result.candidates && result.candidates[0] && result.candidates[0].finishReason;
-    throw new Error(`Gemini TTS returned no audio (finishReason: ${finishReason || 'unknown'})`);
-  }
-
-  const rateMatch = /rate=(\d+)/.exec(audioPart.inlineData.mimeType);
-  const sampleRate = rateMatch ? parseInt(rateMatch[1], 10) : 24000;
-  const pcmBuffer = Buffer.from(audioPart.inlineData.data, 'base64');
-  return { pcmBuffer, sampleRate };
-}
-
-let mp3EncoderPromise;
-function loadMp3Encoder() {
-  // @breezystack/lamejs only ships an ESM build, so it must be dynamically
-  // imported from this CommonJS module.
-  if (!mp3EncoderPromise) mp3EncoderPromise = import('@breezystack/lamejs');
-  return mp3EncoderPromise;
-}
-
-// Gemini TTS returns raw 16-bit signed little-endian PCM (mono), which the
-// rest of the pipeline can't store/stream directly -- everything downstream
-// (audioStore, HLS playlist/segment routes) assumes MP3 bytes -- so it's
-// encoded to MP3 here via a pure-JS encoder rather than requiring ffmpeg.
-async function pcmToMp3(pcmBuffer, sampleRate) {
-  const { Mp3Encoder } = await loadMp3Encoder();
-  const sampleCount = Math.floor(pcmBuffer.length / 2);
-  const samples = new Int16Array(sampleCount);
-  for (let i = 0; i < sampleCount; i++) {
-    samples[i] = pcmBuffer.readInt16LE(i * 2);
-  }
-
-  const encoder = new Mp3Encoder(1, sampleRate, 64);
-  const chunks = [];
-  const blockSize = 1152;
-  for (let i = 0; i < samples.length; i += blockSize) {
-    const mp3buf = encoder.encodeBuffer(samples.subarray(i, i + blockSize));
-    if (mp3buf.length > 0) chunks.push(Buffer.from(mp3buf));
-  }
-  const end = encoder.flush();
-  if (end.length > 0) chunks.push(Buffer.from(end));
-
-  return Buffer.concat(chunks);
-}
-
-async function synthesizeProTierSection(title, chapter, textContent) {
-  const { promptText, speakerConfigs, languageCode } = buildProSynthesisPlan(textContent, title, chapter);
-  const speechConfig = buildSpeechConfig(speakerConfigs, languageCode);
-  const baseRequest = {
-    model: GEMINI_TTS_MODEL,
-    config: { responseModalities: ['AUDIO'], speechConfig }
-  };
-
-  let result;
-  try {
-    result = await genAI.models.generateContent({ ...baseRequest, contents: promptText });
-  } catch (primaryErr) {
-    const errStr = (primaryErr.message || '') + (primaryErr.details || '');
-    if (/violation|content|safety|invalid_argument|blocked|policy/i.test(errStr)) {
-      console.warn(`[Gemini TTS Safety Retry] Content violation detected. Retrying with sanitized text...`);
-      result = await genAI.models.generateContent({ ...baseRequest, contents: sanitizeTextForSafety(promptText) });
-    } else {
-      throw primaryErr;
-    }
-  }
-
-  const { pcmBuffer, sampleRate } = extractAudioPart(result);
-  return pcmToMp3(pcmBuffer, sampleRate);
 }
 
 function buildBasicRequest(textContent, voiceId) {
@@ -412,17 +327,14 @@ function buildBasicRequest(textContent, voiceId) {
   };
 }
 
-function sanitizeTextForSafety(text) {
-  let clean = text.replace(/\[[^\]]*\]/g, '');
-  clean = clean.replace(/[\u201C\u201D"]/g, "'").replace(/[\u2014\u2013]/g, ", ");
-  clean = clean.replace(/\s+/g, ' ').trim();
-  return clean;
-}
-
 function sanitizeForContentViolation(request) {
   const retryReq = JSON.parse(JSON.stringify(request));
   if (retryReq.input && retryReq.input.text) {
-    retryReq.input.text = sanitizeTextForSafety(retryReq.input.text);
+    let text = retryReq.input.text;
+    text = text.replace(/\[[^\]]*\]/g, '');
+    text = text.replace(/[\u201C\u201D"]/g, "'").replace(/[\u2014\u2013]/g, ", ");
+    text = text.replace(/\s+/g, ' ').trim();
+    retryReq.input.text = text;
   }
   return retryReq;
 }
@@ -430,63 +342,53 @@ function sanitizeForContentViolation(request) {
 async function synthesizeAndCacheSection(title, chapter, section) {
   const isProTier = title && title.tts_tier === 'pro';
   const isSSML = !isProTier && chapter.is_ssml && (section.content || '').trim().startsWith('<speak>');
+  let request;
+
+  if (isSSML) {
+    const ssmlContent = sanitizeSSML(section.content, true);
+    const speakableText = (ssmlContent || '').replace(/<[^>]*>/g, '').trim();
+    if (speakableText.length === 0) {
+      return handleEmptySectionFallback(section.id);
+    }
+    request = buildSSMLRequest(ssmlContent, chapter.voice_id || 'en-US-Chirp3-HD-Aoede');
+  } else if (isProTier) {
+    const textContent = (section.content || '').replace(/<[^>]*>/g, '').trim();
+    if (textContent.length === 0) {
+      return handleEmptySectionFallback(section.id);
+    }
+    request = buildProRequest(textContent, title, chapter);
+  } else {
+    const textContent = (section.content || '').replace(/<[^>]*>/g, '').trim();
+    if (textContent.length === 0) {
+      return handleEmptySectionFallback(section.id);
+    }
+    request = buildBasicRequest(textContent, chapter.voice_id || 'Aoede');
+  }
 
   const startTime = Date.now();
   try {
-    let audioBuffer;
+    const payloadBytes = Buffer.byteLength(JSON.stringify(request), 'utf8');
+    const msgStart = `[TTS Start] Section ${section.id} (IsProTier: ${isProTier}, PayloadSize: ${payloadBytes}B)`;
+    console.log(msgStart);
+    debugLog(msgStart);
+    debugLog(`TTS Request Payload for ${section.id}:\n${JSON.stringify(request, null, 2)}`);
 
-    if (isProTier) {
-      const textContent = (section.content || '').replace(/<[^>]*>/g, '').trim();
-      if (textContent.length === 0) {
-        return handleEmptySectionFallback(section.id);
-      }
-
-      const msgStart = `[TTS Start] Section ${section.id} (IsProTier: true, model: ${GEMINI_TTS_MODEL})`;
-      console.log(msgStart);
-      debugLog(msgStart);
-
-      audioBuffer = await synthesizeProTierSection(title, chapter, textContent);
-    } else {
-      let request;
-      if (isSSML) {
-        const ssmlContent = sanitizeSSML(section.content, true);
-        const speakableText = (ssmlContent || '').replace(/<[^>]*>/g, '').trim();
-        if (speakableText.length === 0) {
-          return handleEmptySectionFallback(section.id);
-        }
-        request = buildSSMLRequest(ssmlContent, chapter.voice_id || 'en-US-Chirp3-HD-Aoede');
+    let response;
+    try {
+      [response] = await ttsClient.synthesizeSpeech(request);
+    } catch (primaryErr) {
+      const errStr = (primaryErr.message || '') + (primaryErr.details || '');
+      if (/violation|content|safety|invalid_argument|blocked|policy/i.test(errStr)) {
+        console.warn(`[TTS Safety Retry] Content violation detected for section ${section.id}. Retrying with sanitized text heuristic...`);
+        debugLog(`[TTS Safety Retry] Primary attempt failed for section ${section.id}: ${primaryErr.message}. Retrying with sanitized text...`);
+        const retryRequest = sanitizeForContentViolation(request);
+        [response] = await ttsClient.synthesizeSpeech(retryRequest);
       } else {
-        const textContent = (section.content || '').replace(/<[^>]*>/g, '').trim();
-        if (textContent.length === 0) {
-          return handleEmptySectionFallback(section.id);
-        }
-        request = buildBasicRequest(textContent, chapter.voice_id || 'Aoede');
+        throw primaryErr;
       }
-
-      const payloadBytes = Buffer.byteLength(JSON.stringify(request), 'utf8');
-      const msgStart = `[TTS Start] Section ${section.id} (IsProTier: false, PayloadSize: ${payloadBytes}B)`;
-      console.log(msgStart);
-      debugLog(msgStart);
-      debugLog(`TTS Request Payload for ${section.id}:\n${JSON.stringify(request, null, 2)}`);
-
-      let response;
-      try {
-        [response] = await ttsClient.synthesizeSpeech(request);
-      } catch (primaryErr) {
-        const errStr = (primaryErr.message || '') + (primaryErr.details || '');
-        if (/violation|content|safety|invalid_argument|blocked|policy/i.test(errStr)) {
-          console.warn(`[TTS Safety Retry] Content violation detected for section ${section.id}. Retrying with sanitized text heuristic...`);
-          debugLog(`[TTS Safety Retry] Primary attempt failed for section ${section.id}: ${primaryErr.message}. Retrying with sanitized text...`);
-          const retryRequest = sanitizeForContentViolation(request);
-          [response] = await ttsClient.synthesizeSpeech(retryRequest);
-        } else {
-          throw primaryErr;
-        }
-      }
-
-      audioBuffer = response.audioContent;
     }
 
+    const audioBuffer = response.audioContent;
     const elapsed = ((Date.now() - startTime) / 1000).toFixed(2);
 
     const audioPath = await audioStore.saveSectionAudio(section.id, audioBuffer);
