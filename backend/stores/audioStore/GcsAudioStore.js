@@ -11,14 +11,13 @@ class GcsAudioStore {
     }
     this.storage = new Storage();
     this.bucket = this.storage.bucket(bucketName);
-    // Matches the layout audio files already have today under the FUSE-mounted
-    // bucket (STORAGE_BASE_PATH/audio_files/{sectionId}.mp3), so switching this
-    // driver on doesn't orphan anything already cached.
-    this.audioPrefix = 'audio_files';
+    // v2 = AAC (Gemini 3.8 migration). Pre-migration MP3s directly under
+    // audio_files/ are ignored, so those sections regenerate lazily on next play.
+    this.audioPrefix = 'audio_files/v2';
   }
 
   getSectionObjectKey(sectionId) {
-    return `${this.audioPrefix}/${sectionId}.mp3`;
+    return `${this.audioPrefix}/${sectionId}.aac`;
   }
 
   async readSectionAudio(sectionId) {
@@ -37,7 +36,7 @@ class GcsAudioStore {
   async saveSectionAudio(sectionId, audioBuffer) {
     const key = this.getSectionObjectKey(sectionId);
     const file = this.bucket.file(key);
-    await file.save(audioBuffer, { contentType: 'audio/mpeg', resumable: false });
+    await file.save(audioBuffer, { contentType: 'audio/aac', resumable: false });
     return `gs://${this.bucket.name}/${key}`;
   }
 

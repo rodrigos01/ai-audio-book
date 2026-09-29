@@ -10,7 +10,6 @@ router.patch('/:id', authMiddleware, async (req, res) => {
       id: req.params.id,
       name: req.body.name,
       content: req.body.content,
-      is_ssml: req.body.is_ssml,
       clientId: req.clientId,
       userId: req.userId
     });
@@ -57,7 +56,7 @@ router.get('/:chapterId/stream', async (req, res) => {
       chapterId: req.params.chapterId,
       offset,
       onReady: () => {
-        res.setHeader('Content-Type', 'audio/mpeg');
+        res.setHeader('Content-Type', 'audio/aac');
         res.setHeader('Transfer-Encoding', 'chunked');
       },
       onAudioChunk: (chunk) => {
@@ -111,7 +110,7 @@ const handleSegmentRequest = async (req, res) => {
     } else if (redirectUrl) {
       res.redirect(302, redirectUrl);
     } else {
-      res.setHeader('Content-Type', 'audio/mpeg');
+      res.setHeader('Content-Type', 'audio/aac');
       res.setHeader('Content-Length', audioBuffer.length);
       res.setHeader('Accept-Ranges', 'bytes');
       res.send(audioBuffer);
@@ -126,6 +125,8 @@ const handleSegmentRequest = async (req, res) => {
 };
 
 router.get('/:chapterId/hls/segment/:sectionIndex', handleSegmentRequest);
+router.get('/:chapterId/hls/segment/:sectionIndex.aac', handleSegmentRequest);
+// Legacy alias from the MP3 era.
 router.get('/:chapterId/hls/segment/:sectionIndex.mp3', handleSegmentRequest);
 
 module.exports = router;

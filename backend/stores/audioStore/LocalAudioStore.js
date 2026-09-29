@@ -5,14 +5,16 @@ const { debugLog } = require('../../services/logger');
 class LocalAudioStore {
   constructor() {
     this.storageBasePath = path.resolve(process.env.STORAGE_BASE_PATH || path.resolve(__dirname, '../..'));
-    this.audioDir = path.join(this.storageBasePath, 'audio_files');
+    // v2 = AAC (Gemini 3.8 migration). Pre-migration MP3s under audio_files/ are
+    // ignored, so those sections regenerate lazily on next play.
+    this.audioDir = path.join(this.storageBasePath, 'audio_files', 'v2');
     if (!fs.existsSync(this.audioDir)) {
       fs.mkdirSync(this.audioDir, { recursive: true });
     }
   }
 
   getSectionAudioPath(sectionId) {
-    return path.join(this.audioDir, `${sectionId}.mp3`);
+    return path.join(this.audioDir, `${sectionId}.aac`);
   }
 
   async readSectionAudio(sectionId) {

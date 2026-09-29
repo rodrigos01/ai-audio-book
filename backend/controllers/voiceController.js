@@ -1,15 +1,23 @@
-const VOICES = require('../voices.json');
+const gemini = require('../services/geminiTtsClient');
+const { getLanguageCode } = require('../services/languageCodes');
 
+// The Voice Library (Gemini prebuilt voices), used by the voice picker.
 class VoiceController {
-  getVoices({ tierFilter }) {
-    let filtered = VOICES;
-    if (tierFilter) {
-      filtered = VOICES.filter(v => v.tier === tierFilter || (!v.tier && tierFilter === 'basic'));
-    }
-    return filtered.map(v => ({
-      ...v,
-      lang: 'en-US',
-      sampleUrl: `/samples/${v.id}.mp3`
+  async getVoices({ language, gender, accent }) {
+    const languageCode = getLanguageCode(language);
+    const normalizedGender = ['male', 'female', 'neutral'].includes((gender || '').toLowerCase())
+      ? gender.toLowerCase()
+      : undefined;
+    const voices = await gemini.listLibraryVoices({ languageCode, gender: normalizedGender, accent, pageSize: 100 });
+    return voices.map(v => ({
+      id: v.id,
+      name: v.name,
+      gender: v.raw.gender || null,
+      accent: v.raw.accent || null,
+      persona: v.raw.persona || null,
+      pitch: v.raw.pitch || null,
+      description: v.raw.description || null,
+      lang: v.raw.language_code || languageCode,
     }));
   }
 }
