@@ -83,7 +83,7 @@ export const DownloadsProvider = ({ children }) => {
         setStatus(chapterId, { sizeBytes: bytesReceived });
       }
 
-      const blob = new Blob(chunks, { type: 'audio/mpeg' });
+      const blob = new Blob(chunks, { type: 'audio/aac' });
       const record = {
         chapterId,
         titleId: chapter.title_id,

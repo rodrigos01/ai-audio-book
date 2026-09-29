@@ -20,18 +20,22 @@ backend/
 ├── controllers/                  # Pure Business Logic Layer (Zero Express/HTTP references)
 │   ├── titleController.js        # Title creation, voice propagation, claimTitles, addChapter (Google Doc & AI casting)
 │   ├── chapterController.js      # Chapter updates, deletion, prepareChapter, streamChapterAudio
-│   └── voiceController.js        # Voice catalog enrichment
+│   └── voiceController.js        # Voice Library listing
 ├── stores/                       # Data Management Layer
 │   ├── firestoreStore.js         # Unified Firestore database collection queries & batch updates
-│   └── audioStore/               # MP3 section audio caching, pluggable by AUDIO_STORE_DRIVER
+│   └── audioStore/               # AAC section audio caching, pluggable by AUDIO_STORE_DRIVER
 │       ├── index.js              # Selects LocalAudioStore (default) or GcsAudioStore
 │       ├── LocalAudioStore.js    # Reads/writes local disk (or FUSE-mounted GCS); proxies segment bytes through the app
 │       └── GcsAudioStore.js      # Reads/writes GCS directly; hands out signed URLs so segments are served straight from GCS
 ├── services/                     # Domain Services
 │   ├── googleDocsService.js      # Google Docs API text extraction service
-│   ├── aiCastingService.js       # Gemini 3.6 Flash AI voice casting & SSML script generation
-│   ├── ttsService.js             # Google Cloud Text-to-Speech synthesis (Chirp3 & Gemini Multi-Speaker TTS)
-│   ├── textSplitterService.js    # Text & SSML sectioning routines with pre-calculated timing
+│   ├── aiCastingService.js       # Gemini 3.8 Flash casting (named vs supporting characters, voice descriptions) & "Speaker: text" script generation
+│   ├── ttsService.js             # Section synthesis: resolve voices -> Gemini 3.8 TTS -> AAC -> cache
+│   ├── geminiTtsClient.js        # @google/genai interactions/voices client (synthesis, Voice Design, Voice Library)
+│   ├── voiceResolutionService.js # Named -> Voice Design (library fallback); supporting -> Voice Library; legacy id mapping
+│   ├── audioEncoder.js           # PCM -> ADTS AAC via ffmpeg; ADTS duration
+│   ├── scriptText.js             # Shared "Speaker: text" parsing (and legacy SSML -> turns)
+│   ├── textSplitterService.js    # Text & script sectioning (<=2 speakers, byte-capped) with pre-calculated timing
 │   └── logger.js                 # Centralized logging helper
 ├── middleware/                   # Express Middlewares
 │   ├── auth.js                   # Firebase ID Token verification

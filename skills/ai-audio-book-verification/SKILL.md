@@ -9,7 +9,7 @@ The AI Audiobook app is a multi-service application:
 - **Backend**: Node.js Express server on port 3005 (local) or 8080 (Cloud Run).
 - **Database**: Google Cloud Firestore (Decoupled Repository Pattern).
 - **Storage**: GCS Bucket mounted via FUSE to `/app/storage` (local: configurable).
-- **TTS**: Google Cloud Text-to-Speech via Service Account credentials.
+- **TTS**: Gemini 3.8 Flash TTS (`@google/genai` interactions/voices API, `GEMINI_API_KEY`), PCM encoded to AAC with `ffmpeg` (must be on `PATH` locally).
 
 ---
 
@@ -24,8 +24,10 @@ The AI Audiobook app is a multi-service application:
 1.  **Library Check**: Navigate to the frontend url, which will be indicated in the "npm run" output. Verify initial loading state.
 2.  **Creation**: Use "Create Title" with a descriptive name.
 3.  **Chapters**: Click the book, fill in the "Add Chapter" form.
-4.  **Audio Generation**: Monitor "Generate Chapter Audio" request completion.
-5.  **Playback**: Open the player and wait for the progress bar to advance.
+4.  **AI casting** (create the title with "AI Casting" on): once the chapter finishes casting, the cast strip should show each character as *Named* (custom voice) or *Supporting* (library voice); the narrator is a custom voice unless one was picked. A character may show "(fallback)" if voice design failed and the Voice Library was used instead.
+5.  **Audio Generation**: Sections synthesize on demand as the player requests HLS segments (`/api/chapters/:id/hls/segment/:n`, `audio/aac`); the first play of a section takes a few seconds.
+6.  **Playback**: Open the player and wait for the progress bar to advance.
+7.  **Voice edits**: change a character's voice (custom description or a library voice); only that character's sections should re-synthesize on next play.
 
 ### 2. Automated Diagnostics
 Execute the scripts in the `scripts/` directory:

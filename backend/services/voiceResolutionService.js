@@ -27,6 +27,16 @@ const PREBUILT_IDS = new Set([
   'algenib', 'algieba', 'alnilam', 'enceladus', 'iapetus', 'puck', 'rasalgethi',
   'sadachbia', 'sadaltager', 'schedar', 'umbriel', 'charon', 'fenrir', 'leda', 'zubenelgenubi',
 ]);
+// Non-Chirp3 Cloud TTS voices the old pipeline mapped by hand.
+const LEGACY_CLOUD_VOICES = {
+  'en-US-Journey-F': 'aoede',
+  'en-US-Journey-D': 'puck',
+  'en-US-Journey-O': 'kore',
+  'en-US-Casual-K': 'fenrir',
+  'en-US-Studio-O': 'leda',
+  'en-US-Studio-Q': 'charon',
+  'en-US-News-K': 'leda',
+};
 const DEFAULT_FEMALE = 'aoede';
 const DEFAULT_MALE = 'charon';
 
@@ -57,6 +67,7 @@ function legacyVoiceToLibraryId(voiceId) {
   // Library ids (and designed voice ids) are lowercase; legacy ids are
   // "en-US-Chirp3-HD-Aoede" / "Aoede" style.
   if (/^[a-z0-9_-]+$/.test(voiceId)) return voiceId;
+  if (LEGACY_CLOUD_VOICES[voiceId]) return LEGACY_CLOUD_VOICES[voiceId];
   const short = voiceId.split('-').pop().toLowerCase();
   if (short === 'orpheus') return 'charon';
   if (short === 'callisto') return 'leda';
