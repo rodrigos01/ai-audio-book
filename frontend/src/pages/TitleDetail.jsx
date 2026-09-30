@@ -271,6 +271,18 @@ export default function TitleDetail() {
     }
   };
 
+  // First-person narration: make this speaker use another character's voice.
+  const handleAliasVoice = async (character, aliasOf) => {
+    setIsChangingVoice(false);
+    setChangingCharacter(null);
+    try {
+      const token = await getToken();
+      await api.updateTitle(id, { voices: { [character]: { aliasOf: aliasOf || null } } }, token);
+    } catch (err) {
+      setError(err.message);
+    }
+  };
+
   const openVoiceEditor = (character, entry) => {
     setChangingCharacter(character);
     setIsChangingVoice(true);
@@ -401,10 +413,11 @@ export default function TitleDetail() {
                           ? voices.find(v => v.id.toLowerCase() === (entry?.voiceId || legacyVoiceId || '').toLowerCase())
                           : null;
                         const isChanging = changingCharacter === character;
-                        const resolving = entry && !entry.voiceId;
+                        const resolving = entry && !entry.voiceId && !entry.aliasOf;
                         const kindLabel = !entry ? 'Legacy' : (entry.kind === 'supporting' ? 'Supporting' : 'Named');
                         const voiceLabel = !entry
                           ? (libraryVoice?.name || 'Library voice')
+                          : entry.aliasOf ? `Same voice as ${entry.aliasOf}`
                           : resolving ? 'Preparing voice…'
                           : entry.origin === 'design' ? 'Custom voice'
                           : `${libraryVoice?.name || 'Library voice'}${entry.fallback ? ' (fallback)' : ''}`;
@@ -623,7 +636,25 @@ export default function TitleDetail() {
                         <md-icon><span className="material-symbols-outlined">close</span></md-icon>
                     </md-icon-button>
                     </div>
-                    {titleVoices[changingCharacter] && (
+                    {titleVoices[changingCharacter] && Object.keys(titleVoices).length > 1 && (
+                      <label style={{ display: 'flex', flexDirection: 'column', gap: '0.35rem', fontSize: '0.85rem', marginBottom: '1.5rem' }}>
+                        <span style={{ fontWeight: 600 }}>Same voice as</span>
+                        <span className="text-xs" style={{ color: 'var(--md-sys-color-on-surface-variant)' }}>
+                          For first-person narration, link the narrator to the character telling the story.
+                        </span>
+                        <select
+                          value={titleVoices[changingCharacter]?.aliasOf || ''}
+                          onChange={(e) => handleAliasVoice(changingCharacter, e.target.value)}
+                          style={{ height: '44px', borderRadius: '0.75rem', padding: '0 0.75rem' }}
+                        >
+                          <option value="">None (its own voice)</option>
+                          {Object.keys(titleVoices).filter(n => n !== changingCharacter && !titleVoices[n]?.aliasOf).map(n => (
+                            <option key={n} value={n}>{n}</option>
+                          ))}
+                        </select>
+                      </label>
+                    )}
+                    {titleVoices[changingCharacter] && !titleVoices[changingCharacter].aliasOf && (
                       <div className="flex-col gap-4" style={{ backgroundColor: 'var(--md-sys-color-surface-container-highest)', padding: '1rem', borderRadius: '1rem', marginBottom: '1.5rem' }}>
                         <span style={{ fontWeight: 600 }}>Custom voice</span>
                         <span className="text-xs" style={{ color: 'var(--md-sys-color-on-surface-variant)' }}>

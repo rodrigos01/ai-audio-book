@@ -153,9 +153,13 @@ function resolveEntryOnce(title, name, entry, exclude) {
  * `title.voices` with any newly resolved entry so callers in the same request
  * see it.
  */
-async function resolveVoice(title, label, { exclude } = {}) {
+async function resolveVoice(title, label, { exclude, depth = 0 } = {}) {
   const languageCode = getLanguageCode(title.language);
   const found = findEntry(title.voices, label);
+  // First-person narrator: speaks with a character's own voice.
+  if (found && found.entry.aliasOf && depth < 3) {
+    return resolveVoice(title, found.entry.aliasOf, { exclude, depth: depth + 1 });
+  }
   if (found && (found.entry.description || found.entry.voiceId)) {
     const entry = found.entry.description || found.entry.pinned
       ? await resolveEntryOnce(title, found.name, found.entry, exclude || usedVoiceIds(title))
@@ -178,6 +182,7 @@ async function resolveAllVoices(title) {
   const names = Object.keys(title.voices || {});
   // Sequential so library picks can exclude voices already assigned.
   for (const name of names) {
+    if (title.voices[name] && title.voices[name].aliasOf) continue;
     try {
       await resolveVoice(title, name);
     } catch (err) {

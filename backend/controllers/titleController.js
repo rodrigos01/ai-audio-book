@@ -4,7 +4,7 @@ const aiCasting = require('../services/aiCastingService');
 const googleDocsService = require('../services/googleDocsService');
 const { breakContentIntoSections, splitMultiSpeakerIntoSections, buildSectionItems } = require('../services/textSplitterService');
 const { deleteChapterSections, invalidateSpeakerAudio, synthesizePreview } = require('../services/ttsService');
-const { resolveVoice, resolveAllVoices, releaseTitleVoices } = require('../services/voiceResolutionService');
+const { resolveVoice, resolveAllVoices, releaseTitleVoices, legacyVoiceToLibraryId } = require('../services/voiceResolutionService');
 const { cleanScript, NARRATOR } = require('../services/scriptText');
 const gemini = require('../services/geminiTtsClient');
 const { getLanguageCode } = require('../services/languageCodes');
@@ -75,8 +75,21 @@ class TitleController {
             touched = true;
           }
         }
+        if (patch.aliasOf !== undefined) {
+          // "Same voice as <character>" (first-person narrator), or null to unlink.
+          if (patch.aliasOf && !(title.voices || {})[patch.aliasOf]) throw new ValidationError(`Unknown character: ${patch.aliasOf}`);
+          if (patch.aliasOf === charName) throw new ValidationError('A voice cannot alias itself');
+          if (patch.aliasOf) {
+            Object.assign(next, { aliasOf: patch.aliasOf, voiceId: null, origin: null, hash: null, pinned: false });
+          } else {
+            delete next.aliasOf;
+            if (!next.description) throw new ValidationError('Set a voice description or library voice before unlinking');
+          }
+          touched = true;
+        }
         if (patch.voiceId) {
           // User picked a specific library voice: pin it.
+          delete next.aliasOf;
           Object.assign(next, { voiceId: patch.voiceId, origin: 'library', pinned: true, fallback: false, hash: null });
           touched = true;
         }
@@ -86,9 +99,13 @@ class TitleController {
         if (existing.origin === 'design' && existing.voiceId && (patch.voiceId || next.voiceId !== existing.voiceId)) {
           await gemini.deleteVoice(existing.voiceId);
         }
-        if (!patch.voiceId) Object.assign(next, { voiceId: null, origin: null, hash: null });
+        if (!patch.voiceId && patch.aliasOf === undefined) Object.assign(next, { voiceId: null, origin: null, hash: null });
         await firestoreStore.setTitleVoice(id, charName, next);
         changed.add(charName);
+        // Anything aliased to this character changes voice with it.
+        for (const [other, e] of Object.entries(title.voices || {})) {
+          if (e && e.aliasOf && e.aliasOf.toLowerCase() === charName.toLowerCase()) changed.add(other);
+        }
       }
     }
 
@@ -192,6 +209,14 @@ class TitleController {
 
       for (const [charName, entry] of Object.entries(result.new_voices)) {
         await firestoreStore.setTitleVoice(titleId, charName, entry);
+      }
+      // The user picked a narrator voice AND the narrator is a first-person
+      // character: that character must use the same voice, not a new one.
+      if (title.narrator_voice && result.narrator_is_character && result.new_voices[result.narrator_is_character]) {
+        await firestoreStore.setTitleVoice(titleId, result.narrator_is_character, {
+          ...result.new_voices[result.narrator_is_character],
+          origin: 'library', voiceId: legacyVoiceToLibraryId(title.narrator_voice), pinned: true,
+        });
       }
       if (!title.narrator_personality && result.narrator_personality) {
         await firestoreStore.updateTitle(titleId, { narrator_personality: result.narrator_personality });

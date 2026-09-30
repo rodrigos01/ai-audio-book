@@ -51,7 +51,7 @@ class AICastingService {
         const castContext = currentCastLines.length > 0 ? currentCastLines.join('\n') : 'None';
         const narratorInstruction = hasNarratorVoice
             ? 'The narrator already has a voice chosen by the user. Do not describe one: return empty strings for "narrator_voice_description" and "narrator_gender".'
-            : 'If "Narrator" is not in the current cast, describe a narrator voice. If the text is first-person narrative, the narrator is the main character: reuse that character\'s description and personality.';
+            : 'If "Narrator" is not in the current cast, describe a narrator voice.';
 
         const castingPrompt = `
             ### Task: Phase 1 - Character Identification & Voice Casting
@@ -66,6 +66,7 @@ class AICastingService {
             3. Set "kind": "named" for every character who is referred to by a personal name in the text. Set "kind": "supporting" for characters known only by a role or description (the guard, a waiter, a stranger).
             4. For characters in the "Current Title Cast", reuse the same name, kind, gender, personality and voice description exactly. Only add characters that are new to this chapter.
             5. ${narratorInstruction}
+            5b. FIRST-PERSON NARRATION: if the text is narrated in the first person by a character (the narrator IS a character in the story), set "narrator_is_character" to that character's name (it must also appear in "updated_cast" with its own voice description) and return empty strings for "narrator_voice_description" and "narrator_gender". If the first-person narrator has no name, leave "narrator_is_character" empty and describe the narrator voice as usual (do not add the narrator to "updated_cast"). For third-person narration, "narrator_is_character" is empty.
             6. The chapter text is written in ${language}. Character names and the "personality"/"narrator_personality" descriptions must also be written in ${language}.
             7. "personality" is a succinct description of how the character speaks (e.g. "Inquisitive, articulate host with warm tone"). Include any accent or region the text gives them.
             8. "voice_description" is 2-4 sentences describing only the VOICE itself (age, pitch, timbre, pace, accent, energy) -- no biography, names, or plot. Fold in any accent or region.
@@ -93,12 +94,13 @@ class AICastingService {
                         required: ["name", "kind", "gender", "personality", "voice_description"]
                     }
                 },
+                narrator_is_character: { type: "string", description: "Name of the cast character who narrates in the first person, or empty" },
                 narrator_gender: { type: "string" },
                 narrator_personality: { type: "string", description: "Succinct description of how the narrator should sound" },
                 narrator_voice_description: { type: "string", description: "2-4 sentences describing only the narrator's voice" },
                 delivery_instruction: { type: "string", description: "A succinct, chapter-wide directive for tone, genre and pacing" }
             },
-            required: ["updated_cast", "narrator_gender", "narrator_personality", "narrator_voice_description", "delivery_instruction"]
+            required: ["updated_cast", "narrator_is_character", "narrator_gender", "narrator_personality", "narrator_voice_description", "delivery_instruction"]
         };
 
         const castingResult = await this.genAI.models.generateContent({
@@ -127,7 +129,15 @@ class AICastingService {
                 hash: null,
             };
         }
-        if (!hasNarratorVoice && !existingVoices.Narrator && castingResponse.narrator_voice_description) {
+        const narratorCharacter = (castingResponse.narrator_is_character || '').trim();
+        const allNames = [...Object.keys(existingVoices), ...Object.keys(newVoices)];
+        const aliasTarget = narratorCharacter && !existingVoices.Narrator
+            ? allNames.find(n => n.toLowerCase() === narratorCharacter.toLowerCase())
+            : null;
+        if (aliasTarget && !hasNarratorVoice) {
+            // First-person narrator: the narrator speaks with the character's own voice.
+            newVoices.Narrator = { kind: 'named', aliasOf: aliasTarget };
+        } else if (!hasNarratorVoice && !existingVoices.Narrator && castingResponse.narrator_voice_description) {
             newVoices.Narrator = {
                 kind: 'named',
                 gender: castingResponse.narrator_gender || 'neutral',
@@ -144,6 +154,7 @@ class AICastingService {
         if (!skipScriptGeneration) {
             const speakerNames = [...Object.keys(existingVoices), ...Object.keys(newVoices)];
             if (!speakerNames.some(n => n.toLowerCase() === 'narrator')) speakerNames.push('Narrator');
+            const firstPerson = aliasTarget || (existingVoices.Narrator && existingVoices.Narrator.aliasOf) || narratorCharacter;
 
             const scriptPrompt = `
                 ### Task: Phase 2 - Multi-Speaker Script
@@ -160,7 +171,8 @@ class AICastingService {
                 5. For a single non-verbal human vocalization, put a tag inline: <laugh>, <chuckle>, <sigh>, <gasp>, <groan>, <throat-clearing>, <short pause>, <long pause>. No sound effects. No markdown or other symbols.
                 6. Every line must contain words to speak. A pure reaction is written as a tag, e.g. "Chloe: <laugh>".
                 7. The chapter text is written in ${language}. Keep the script -- including any cues -- in ${language}. Do not translate it.
-                8. Keep any single turn under roughly 250 words; split a longer passage into consecutive turns by the same speaker.
+                8. ${firstPerson ? `The story is narrated in the first person by ${firstPerson}. Label ALL of ${firstPerson}'s narration AND dialogue as "${firstPerson}: ..." -- never as "Narrator" -- so the same voice performs both.` : 'Narration by an outside storyteller is labelled "Narrator".'}
+                9. Keep any single turn under roughly 250 words; split a longer passage into consecutive turns by the same speaker.
 
                 ### Chapter Text:
                 ${chapterText}
@@ -176,6 +188,7 @@ class AICastingService {
         return {
             new_voices: newVoices,
             narrator_personality: castingResponse.narrator_personality || null,
+            narrator_is_character: aliasTarget || null,
             script,
             delivery_instruction: castingResponse.delivery_instruction || null,
         };
