@@ -15,7 +15,7 @@ const NARRATOR = 'Narrator';
 
 // A `Style: ...` line directly after a turn sets that turn's delivery style
 // (speech_metadata.style), e.g. `Style: whispering`.
-const STYLE_LINE = /^style:\s*(.*)$/i;
+const STYLE_LINE = /^style\s*:\s*(.*)$/i;
 
 function parseSpeakerLine(line) {
   const match = line.match(SPEAKER_LINE);
