@@ -1,5 +1,5 @@
 const { v4: uuidv4 } = require('uuid');
-const { parseSpeakerLine } = require('./scriptText');
+const { parseSpeakerLine, parseScriptTurns } = require('./scriptText');
 
 // Splits a single unpunctuated run-on that alone exceeds the byte budget on
 // word boundaries (a lone word longer than the budget is kept whole).
@@ -63,17 +63,19 @@ function splitMultiSpeakerIntoSections(scriptText, maxBytes = 800, maxSpeakers =
   if (!scriptText) return [];
 
   const cleanText = scriptText.replace(/```[a-z]*\s*/gi, '').replace(/```/gi, '').trim();
-  const rawLines = cleanText.split(/\r?\n/).map(l => l.trim()).filter(Boolean);
 
+  // Each turn keeps its `Style:` line (repeated on every chunk if a long turn
+  // is split) so the delivery style applies to the whole turn.
   const turns = [];
-  for (const line of rawLines) {
-    const { speaker, text: dialogue } = parseSpeakerLine(line);
-    const fullLine = `${speaker}: ${dialogue}`;
+  for (const { speaker, text: dialogue, style } of parseScriptTurns(cleanText)) {
+    if (!dialogue) continue;
+    const styleLine = style ? `\nStyle: ${style}` : '';
+    const fullLine = `${speaker}: ${dialogue}${styleLine}`;
 
     if (Buffer.byteLength(fullLine, 'utf8') > maxBytes) {
-      const chunks = splitTextBySentences(dialogue, `${speaker}: `, maxBytes);
-      for (const chunk of chunks) {
-        turns.push({ speaker, fullLine: chunk });
+      const budget = maxBytes - Buffer.byteLength(styleLine, 'utf8');
+      for (const chunk of splitTextBySentences(dialogue, `${speaker}: `, budget)) {
+        turns.push({ speaker, fullLine: `${chunk}${styleLine}` });
       }
     } else {
       turns.push({ speaker, fullLine });
@@ -113,9 +115,8 @@ function splitMultiSpeakerIntoSections(scriptText, maxBytes = 800, maxSpeakers =
 // Approximate spoken text of a section: strip speaker labels, leading style
 // cues and inline <tags> so the duration estimate isn't inflated by markup.
 function spokenTextOf(text) {
-  return (text || '')
-    .split(/\r?\n/)
-    .map(line => parseSpeakerLine(line.trim()).text.replace(/^\([^)]{1,80}\)\s*/, ''))
+  return parseScriptTurns(text)
+    .map(t => t.text)
     .join(' ')
     .replace(/<[^>]*>/g, '')
     .trim();

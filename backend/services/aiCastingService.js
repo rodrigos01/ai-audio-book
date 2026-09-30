@@ -164,15 +164,21 @@ class AICastingService {
                 ${speakerNames.join(', ')}
 
                 ### Format:
-                1. Put every speaker turn on its own single line: "Speaker: text". Never break a turn across lines. Narration is "Narrator: text".
-                2. Never start a line, or a sentence inside a line, with a "Word:" phrase that could be mistaken for a speaker label. Use a dash instead.
+                1. Put every speaker turn on its own single line: "Speaker: text". Never break a turn across lines. Narration is "Narrator: text". A turn may be followed by one "Style:" line (see 4).
+                2. Never start a line, or a sentence inside a line, with a "Word:" phrase that could be mistaken for a speaker label (other than "Style:" lines). Use a dash instead.
                 3. Strip short dialogue attributions ("[pronoun] said.") ONLY IF they don't add visual or explanatory context to the scene.
-                4. For a sustained delivery (whispering, sarcastic, deadpan, shouting), begin the turn's text with a short cue in parentheses, e.g. "Marlow: (whispering) Come closer." Omit the cue for normal speech. A cue describes delivery only -- never age, name, backstory or accent.
-                5. For a single non-verbal human vocalization, put a tag inline: <laugh>, <chuckle>, <sigh>, <gasp>, <groan>, <throat-clearing>, <short pause>, <long pause>. No sound effects. No markdown or other symbols.
-                6. Every line must contain words to speak. A pure reaction is written as a tag, e.g. "Chloe: <laugh>".
-                7. The chapter text is written in ${language}. Keep the script -- including any cues -- in ${language}. Do not translate it.
+                4. When a turn is delivered in one sustained way throughout (whispering, sarcastic, deadpan, shouting, out of breath), add a "Style:" line directly after that turn, e.g.
+                   Marlow: Come closer.
+                   Style: whispering
+                   Use it only when it fits -- omit it for normal speech. It describes delivery only, never age, name, backstory or accent, it applies to the whole turn above it, and it is written in ${language}. Never write a "Style:" line without a turn directly above it.
+                5. For a single non-verbal human vocalization at a specific moment, put a tag inline: <laugh>, <chuckle>, <sigh>, <gasp>, <groan>, <throat-clearing>, <short pause>, <long pause>. No sound effects. No markdown or other symbols.
+                6. Every turn must contain words to speak. A pure reaction is written as a tag, e.g. "Chloe: <laugh>".
+                7. The chapter text is written in ${language}. Keep the script -- including Style lines and backchannels -- in ${language}. Do not translate it.
                 8. ${firstPerson ? `The story is narrated in the first person by ${firstPerson}. Label ALL of ${firstPerson}'s narration AND dialogue as "${firstPerson}: ..." -- never as "Narrator" -- so the same voice performs both.` : 'Narration by an outside storyteller is labelled "Narrator".'}
                 9. Keep any single turn under roughly 250 words; split a longer passage into consecutive turns by the same speaker.
+                10. BACKCHANNELS: when two characters are in conversation and the text supports it (one briefly acknowledges, reacts to or cuts in on what the other is saying), you may layer the listener's short reaction inside the active speaker's line between pipe characters, so the listener reacts while the speaker is still talking, e.g.
+                   Anna: So the launch is Thursday |oh hmm| and we are not ready.
+                   The reaction is voiced by the other character in that exchange. Use it only between two characters who are both part of the exchange -- never in narration, and never for a character who has no other lines nearby. Keep each reaction to a few words, do not invent reactions the text does not support, and do not drop lines of dialogue the source text gives that listener.
 
                 ### Chapter Text:
                 ${chapterText}
