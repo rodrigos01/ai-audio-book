@@ -53,7 +53,7 @@ Contains the textual or SSML content for individual audiobook sections/chapters.
   | `order_index` | `Number` | Sequence index of the chapter inside the book (1-indexed or 0-indexed). |
   | `name` | `String` \| `null` | Title or label for this specific chapter. |
   | `content` | `String` | Raw narrative text, or (after AI casting) a `Speaker: text` script: one turn per line, an optional leading `(style)` cue, inline `<laugh>`-style tags. Legacy chapters may still hold Chirp3 SSML. |
-  | `voice_id` | `String` \| `null` | Narrator voice id chosen at chapter creation, if any. |
+  | `voice_id` | `String` | Narrator voice: a Voice Library id if one was chosen, otherwise the literal `designed` (the narrator's voice is designed per title, see `titles.voices.Narrator`). Never null; never sent to the TTS API. |
   | `delivery_instruction` | `String` \| `null` | Chapter-wide tone/pacing directive from AI casting. |
   | `audio_version` | `Number` | Incremented whenever the chapter's audio is invalidated; offline downloads compare against it. |
   | `ai_casting_status` | `String` \| `null` | AI voice casting status: `'in_progress'`, `'completed'`, `'failed'`, or `null`. |

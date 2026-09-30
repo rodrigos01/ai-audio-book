@@ -4,7 +4,7 @@ const aiCasting = require('../services/aiCastingService');
 const googleDocsService = require('../services/googleDocsService');
 const { breakContentIntoSections, splitMultiSpeakerIntoSections, buildSectionItems } = require('../services/textSplitterService');
 const { deleteChapterSections, invalidateSpeakerAudio, synthesizePreview } = require('../services/ttsService');
-const { resolveVoice, resolveAllVoices, releaseTitleVoices, legacyVoiceToLibraryId } = require('../services/voiceResolutionService');
+const { resolveVoice, resolveAllVoices, releaseTitleVoices, legacyVoiceToLibraryId, DESIGNED_VOICE_ID } = require('../services/voiceResolutionService');
 const { cleanScript, NARRATOR } = require('../services/scriptText');
 const gemini = require('../services/geminiTtsClient');
 const { getLanguageCode } = require('../services/languageCodes');
@@ -163,7 +163,7 @@ class TitleController {
 
     const maxOrder = await firestoreStore.getMaxChapterOrder(titleId);
     const orderIndex = maxOrder + 1;
-    const voiceId = voice_id || title.narrator_voice || null;
+    const voiceId = voice_id || title.narrator_voice || DESIGNED_VOICE_ID;
     const isAiCasting = !!title.ai_casting_enabled;
     const chapterId = uuidv4();
 
@@ -227,7 +227,7 @@ class TitleController {
 
       await firestoreStore.updateChapter(chapterId, {
         content: processedContent,
-        voice_id: title.narrator_voice || null,
+        voice_id: title.narrator_voice || DESIGNED_VOICE_ID,
         ai_casting_status: 'completed',
         delivery_instruction: result.delivery_instruction || null
       });

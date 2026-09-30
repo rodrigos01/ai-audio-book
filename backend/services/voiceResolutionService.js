@@ -40,6 +40,11 @@ const LEGACY_CLOUD_VOICES = {
 const DEFAULT_FEMALE = 'aoede';
 const DEFAULT_MALE = 'charon';
 
+// Placeholder stored in chapter.voice_id when the narrator has no user-chosen
+// library voice (its voice is designed per title, see title.voices.Narrator).
+// Clients expect a non-null value there; it is never sent to the TTS API.
+const DESIGNED_VOICE_ID = 'designed';
+
 const inFlight = new Map();
 
 function normalizeGender(gender) {
@@ -63,7 +68,7 @@ function findEntry(voices, label) {
 
 // Maps an old Chirp3 / Journey / Gemini-prebuilt voice id to a library voice id.
 function legacyVoiceToLibraryId(voiceId) {
-  if (!voiceId) return DEFAULT_FEMALE;
+  if (!voiceId || voiceId === DESIGNED_VOICE_ID) return DEFAULT_FEMALE;
   // Library ids (and designed voice ids) are lowercase; legacy ids are
   // "en-US-Chirp3-HD-Aoede" / "Aoede" style.
   if (/^[a-z0-9_-]+$/.test(voiceId)) return voiceId;
@@ -198,6 +203,7 @@ async function releaseTitleVoices(title) {
 }
 
 module.exports = {
+  DESIGNED_VOICE_ID,
   computeHash,
   findEntry,
   legacyVoiceToLibraryId,
