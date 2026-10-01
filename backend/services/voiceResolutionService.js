@@ -180,6 +180,31 @@ async function resolveVoice(title, label, { exclude, depth = 0 } = {}) {
 }
 
 /**
+ * Re-resolves a character's voice after synthesis found its stored `voice_...`
+ * id missing (voices designed through the old AI Studio API are not visible on
+ * the enterprise API; stored voices also expire a year after last use). Designs
+ * a fresh voice from the stored description (or re-matches a library voice).
+ * `failedVoiceId` guards against concurrent requests each redesigning: if the
+ * stored entry already moved on, that newer voice is used instead.
+ */
+async function refreshVoice(title, label, failedVoiceId) {
+  const languageCode = getLanguageCode(title.language);
+  const fresh = (await firestoreStore.getTitleById(title.id)) || title;
+  const found = findEntry(fresh.voices, label);
+  if (!found) return resolveVoice(title, label);
+  if (found.entry.aliasOf) return refreshVoice(title, found.entry.aliasOf, failedVoiceId);
+
+  title.voices = { ...(title.voices || {}), [found.name]: found.entry };
+  if (found.entry.voiceId && found.entry.voiceId !== failedVoiceId) {
+    return { voiceId: found.entry.voiceId, languageCode };
+  }
+  debugLog(`Voice ${failedVoiceId} for "${found.name}" no longer exists; re-resolving`);
+  const stale = { ...found.entry, voiceId: null, origin: null, hash: null, pinned: false };
+  const entry = await resolveEntryOnce(title, found.name, stale, usedVoiceIds(title));
+  return { voiceId: entry.voiceId, languageCode };
+}
+
+/**
  * Resolves voices for every entry in title.voices that needs one. Called after
  * casting so first play isn't blocked on design calls; failures are logged.
  */
@@ -208,6 +233,7 @@ module.exports = {
   findEntry,
   legacyVoiceToLibraryId,
   resolveVoice,
+  refreshVoice,
   resolveAllVoices,
   releaseTitleVoices,
   usedVoiceIds,

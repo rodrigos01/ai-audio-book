@@ -4,7 +4,7 @@ const firestoreStore = require('../stores/firestoreStore');
 const admin = require('../firebase-config');
 const gemini = require('./geminiTtsClient');
 const { encodePcmToAac, getAdtsDurationSeconds, generateSilentAac } = require('./audioEncoder');
-const { resolveVoice, usedVoiceIds } = require('./voiceResolutionService');
+const { resolveVoice, refreshVoice, usedVoiceIds } = require('./voiceResolutionService');
 const { parseScriptTurns, uniqueSpeakers, isLegacySsml, legacySsmlToTurns } = require('./scriptText');
 
 const MAX_SPEAKERS_PER_REQUEST = 2;
@@ -154,6 +154,16 @@ async function synthesizeGroup(turns, voices, sectionId) {
   }
 }
 
+// A stored voice_... id can stop existing (created via the old AI Studio API,
+// expired, deleted). Find which ones are gone and re-resolve just those.
+async function recoverMissingVoices(title, labelVoices) {
+  for (const [label, voice] of labelVoices) {
+    if (!gemini.isCustomVoiceId(voice.voiceId) || await gemini.voiceExists(voice.voiceId)) continue;
+    const next = await refreshVoice(title, label, voice.voiceId);
+    labelVoices.set(label, { ...voice, ...next });
+  }
+}
+
 async function synthesize(title, chapter, section) {
   const content = section.content || '';
   const turns = (isLegacySsml(content) ? legacySsmlToTurns(content, title && title.casting_map) : parseScriptTurns(content))
@@ -179,10 +189,22 @@ async function synthesize(title, chapter, section) {
     labelVoices.set(label, voice);
   }
 
-  const pcmParts = [];
-  for (const group of groupTurnsBySpeakerLimit(turns)) {
-    const voices = uniqueSpeakers(group).map(label => ({ label, ...labelVoices.get(label) }));
-    pcmParts.push(await synthesizeGroup(group, voices, section.id));
+  const synthesizeAll = async () => {
+    const parts = [];
+    for (const group of groupTurnsBySpeakerLimit(turns)) {
+      const voices = uniqueSpeakers(group).map(label => ({ label, ...labelVoices.get(label) }));
+      parts.push(await synthesizeGroup(group, voices, section.id));
+    }
+    return parts;
+  };
+
+  let pcmParts;
+  try {
+    pcmParts = await synthesizeAll();
+  } catch (err) {
+    if (!err.voiceNotFound) throw err;
+    await recoverMissingVoices(title, labelVoices);
+    pcmParts = await synthesizeAll();
   }
 
   const audioBuffer = await encodePcmToAac(Buffer.concat(pcmParts));

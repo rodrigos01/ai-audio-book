@@ -157,6 +157,16 @@ async function deleteVoice(voiceId) {
   }
 }
 
+// Does a stored voice exist on this API? (404 = no; anything else = assume yes.)
+async function voiceExists(voiceId) {
+  try {
+    await getClient().voices.get(voiceId);
+    return true;
+  } catch (err) {
+    return err.status !== 404;
+  }
+}
+
 let libraryCache = null; // { voices, fetchedAt }
 let libraryInFlight = null;
 
@@ -332,6 +342,7 @@ async function synthesizeRequest(parts, speechConfig) {
       return pcm;
     } catch (err) {
       lastError = err;
+      if (err.status === 404) break; // a missing voice won't appear on retry
       if (attempt < attempts) {
         await sleep(looksLikeModerationRejection(err) ? 2 ** attempt * 1000 : attempt * 1000);
       }
@@ -340,6 +351,10 @@ async function synthesizeRequest(parts, speechConfig) {
   const status = lastError && lastError.status;
   const wrapped = new Error(`Gemini TTS synthesis failed: ${[status, lastError && lastError.message].filter(Boolean).join(' ')}`);
   wrapped.cause = lastError;
+  wrapped.status = status;
+  // A stored voice that no longer exists (deleted, expired after a year unused,
+  // or created through a different API surface such as the old AI Studio one).
+  wrapped.voiceNotFound = status === 404 && /voice/i.test(String(lastError && lastError.message));
   throw wrapped;
 }
 
@@ -387,6 +402,7 @@ module.exports = {
   isCustomVoiceId,
   designVoice,
   deleteVoice,
+  voiceExists,
   listLibraryVoices,
   findLibraryVoice,
   stripBackchannels,

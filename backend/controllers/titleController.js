@@ -4,7 +4,7 @@ const aiCasting = require('../services/aiCastingService');
 const googleDocsService = require('../services/googleDocsService');
 const { breakContentIntoSections, splitMultiSpeakerIntoSections, buildSectionItems } = require('../services/textSplitterService');
 const { deleteChapterSections, invalidateSpeakerAudio, synthesizePreview } = require('../services/ttsService');
-const { resolveVoice, resolveAllVoices, releaseTitleVoices, legacyVoiceToLibraryId, DESIGNED_VOICE_ID } = require('../services/voiceResolutionService');
+const { resolveVoice, refreshVoice, resolveAllVoices, releaseTitleVoices, legacyVoiceToLibraryId, DESIGNED_VOICE_ID } = require('../services/voiceResolutionService');
 const { cleanScript, NARRATOR } = require('../services/scriptText');
 const gemini = require('../services/geminiTtsClient');
 const { getLanguageCode } = require('../services/languageCodes');
@@ -257,8 +257,14 @@ class TitleController {
   async getVoicePreview({ id, name, clientId, userId }) {
     const title = await firestoreStore.getTitle(id, clientId, userId);
     if (!title) throw new NotFoundError('Title not found');
-    const voice = await resolveVoice(title, name);
-    return synthesizePreview({ voiceId: voice.voiceId, languageCode: voice.languageCode, name, language: title.language });
+    let voice = await resolveVoice(title, name);
+    try {
+      return await synthesizePreview({ voiceId: voice.voiceId, languageCode: voice.languageCode, name, language: title.language });
+    } catch (err) {
+      if (!err.voiceNotFound) throw err;
+      voice = await refreshVoice(title, name, voice.voiceId);
+      return synthesizePreview({ voiceId: voice.voiceId, languageCode: voice.languageCode, name, language: title.language });
+    }
   }
 
   // Sample of any library voice, for the voice picker.
