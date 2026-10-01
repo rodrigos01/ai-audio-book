@@ -1,4 +1,4 @@
-const { GoogleGenAI } = require("@google/genai");
+const { getClient } = require("./geminiTtsClient");
 
 // Casting + script generation for Gemini 3.8 TTS.
 //
@@ -7,14 +7,27 @@ const { GoogleGenAI } = require("@google/genai");
 // one (gets a Voice Library voice, matched later from the description).
 // Phase 2 rewrites the chapter as a `Speaker: text` script the splitter and TTS
 // layer consume (see scriptText.js).
+// Retries transient Gemini failures (503 "high demand", 429) with backoff so a
+// momentary blip doesn't downgrade a chapter to un-cast plain narration.
+async function generateWithRetry(genAI, params, attempts = 4) {
+    let lastError;
+    for (let attempt = 1; attempt <= attempts; attempt++) {
+        try {
+            return await genAI.models.generateContent(params);
+        } catch (err) {
+            lastError = err;
+            const transient = [429, 500, 503, 504].includes(err.status) || /UNAVAILABLE|high demand|RESOURCE_EXHAUSTED/i.test(err.message || '');
+            if (!transient || attempt === attempts) break;
+            await new Promise(resolve => setTimeout(resolve, attempt * 3000));
+        }
+    }
+    throw lastError;
+}
+
 class AICastingService {
     constructor() {
-        const apiKey = process.env.GEMINI_API_KEY;
-        if (!apiKey) {
-            console.warn("GEMINI_API_KEY not set. AI Casting will not work.");
-        }
-        this.genAI = new GoogleGenAI({ apiKey: apiKey });
-
+        // Gemini Enterprise API via Application Default Credentials (no API key);
+        // the same client the TTS layer uses. Created lazily on first use.
         const systemInstruction = `
             You are the "AI Director" for a premium audiobook platform.
             Your goal is to transform written text into a dramatic, multi-speaker audio experience.
@@ -41,9 +54,7 @@ class AICastingService {
             hasNarratorVoice = false,
         } = options;
 
-        if (!process.env.GEMINI_API_KEY) {
-            throw new Error("Gemini API key is missing. Please configure it in your environment.");
-        }
+        const genAI = getClient();
 
         const currentCastLines = Object.entries(existingVoices).map(([name, v]) =>
             `${name}: kind=${v.kind || 'named'}, gender=${v.gender || 'unknown'}, personality="${v.personality || ''}", voice="${v.description || ''}"`
@@ -103,7 +114,7 @@ class AICastingService {
             required: ["updated_cast", "narrator_is_character", "narrator_gender", "narrator_personality", "narrator_voice_description", "delivery_instruction"]
         };
 
-        const castingResult = await this.genAI.models.generateContent({
+        const castingResult = await generateWithRetry(genAI, {
             ...this.modelConfig,
             config: {
                 responseMimeType: "application/json",
@@ -184,7 +195,7 @@ class AICastingService {
                 ${chapterText}
             `;
 
-            const scriptResult = await this.genAI.models.generateContent({
+            const scriptResult = await generateWithRetry(genAI, {
                 ...this.modelConfig,
                 contents: scriptPrompt,
             });

@@ -31,7 +31,7 @@ backend/
 │   ├── googleDocsService.js      # Google Docs API text extraction service
 │   ├── aiCastingService.js       # Gemini 3.8 Flash casting (named vs supporting characters, voice descriptions) & "Speaker: text" script generation
 │   ├── ttsService.js             # Section synthesis: resolve voices -> Gemini 3.8 TTS -> AAC -> cache
-│   ├── geminiTtsClient.js        # @google/genai interactions/voices client (synthesis, Voice Design, Voice Library)
+│   ├── geminiTtsClient.js        # Gemini Enterprise API client (enterprise: true): TTS synthesis, Voice Design, Voice Library
 │   ├── voiceResolutionService.js # Named -> Voice Design (library fallback); supporting -> Voice Library; legacy id mapping
 │   ├── audioEncoder.js           # PCM -> ADTS AAC via ffmpeg; ADTS duration
 │   ├── scriptText.js             # Shared "Speaker: text" parsing (and legacy SSML -> turns)

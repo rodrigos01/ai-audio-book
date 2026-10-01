@@ -1,29 +1,45 @@
-// Gemini 3.8 Flash TTS via @google/genai's `interactions` / `voices` API,
-// ported from ai-podcasts-api's src/llm/ttsClient.ts. Only reachable through
-// the AI Studio (API key) backend -- Vertex doesn't expose it on this project.
+// Gemini 3.8 Flash TTS through the Gemini Enterprise API (`enterprise: true`,
+// aiplatform.googleapis.com, Application Default Credentials -- the Cloud Run
+// service account / GOOGLE_APPLICATION_CREDENTIALS). Docs:
+//   .../models/text-to-speech/overview   (generateContent / multi-speaker)
+//   .../models/text-to-speech/voice-design (Voices API)
 //
-// Synthesis is synchronous from the caller's point of view: the streaming call
-// is consumed to completion server-side and the PCM buffered (no low-latency
-// streaming to the client).
+// Synthesis is synchronous from the caller's point of view: the streaming
+// response is consumed to completion server-side and the PCM buffered (no
+// low-latency streaming to the client).
+const fs = require('fs');
 const { GoogleGenAI } = require('@google/genai');
 const { debugLog } = require('./logger');
 
 const TTS_MODEL = 'gemini-3.8-flash-tts';
 const SAMPLE_RATE = 24000; // PCM s16le, mono
 const BYTES_PER_SECOND = SAMPLE_RATE * 2;
-// interactions.create rejects a request whose audio would exceed ~300s, and a
-// stalled stream can't be resumed (confirmed in ai-podcasts-api).
+// A request's audio is capped (~300s); a stalled stream can't be resumed.
 const MAX_AUDIO_SECONDS = 300;
 const STREAM_INACTIVITY_TIMEOUT_MS = 20000;
 const MAX_OTHER_EVENTS_LOGGED = 10;
+// Voice design generates a sample, so it takes ~10-25s per voice.
+const DESIGN_TIMEOUT_MS = 60000;
+const DESIGN_ATTEMPTS = 2;
+const LIBRARY_CACHE_TTL_MS = 6 * 60 * 60 * 1000;
+
+function getProject() {
+  if (process.env.GOOGLE_CLOUD_PROJECT) return process.env.GOOGLE_CLOUD_PROJECT;
+  if (process.env.GCLOUD_PROJECT) return process.env.GCLOUD_PROJECT;
+  try {
+    const keyPath = process.env.GOOGLE_APPLICATION_CREDENTIALS;
+    if (keyPath && fs.existsSync(keyPath)) {
+      const { project_id: projectId } = JSON.parse(fs.readFileSync(keyPath, 'utf8'));
+      if (projectId) return projectId;
+    }
+  } catch { /* fall through */ }
+  return 'ai-audio-book';
+}
 
 let client = null;
 function getClient() {
   if (!client) {
-    if (!process.env.GEMINI_API_KEY) {
-      throw new Error('GEMINI_API_KEY is not set; Gemini TTS is unavailable.');
-    }
-    client = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
+    client = new GoogleGenAI({ enterprise: true, project: getProject(), location: 'global' });
   }
   return client;
 }
@@ -50,6 +66,7 @@ async function withBackoff(fn, attempts) {
     } catch (err) {
       lastError = err;
       if (attempt < attempts) {
+        // RESOURCE_EXHAUSTED (per-minute create quota) needs a real wait.
         const slow = err.status === 429 || looksLikeModerationRejection(err);
         await sleep(slow ? 2 ** attempt * 1000 : attempt * 500);
       }
@@ -58,28 +75,81 @@ async function withBackoff(fn, attempts) {
   throw lastError;
 }
 
+// Stored (designed / replicated) voices are `voice_...`; stateless replicated
+// keys are `voicekey_...`. Everything else is a prebuilt / Voice Library id.
+function isCustomVoiceId(voiceId) {
+  return /^voice(key)?_/.test(voiceId || '');
+}
+
 // ---------------------------------------------------------------------------
 // Voices
 // ---------------------------------------------------------------------------
 
-async function designVoice({ displayName, languageCode, gender, voiceDescription }) {
-  const voice = await withBackoff(() => getClient().voices.create({
-    store: true,
-    voice: {
-      type: 'prompted',
-      display_name: displayName,
-      language_code: languageCode,
-      gender,
-      prompted: { input: voiceDescription },
-    },
-  }), 3);
-  if (!voice.id) throw new Error('Voice Design did not return a voice id');
-  return voice.id;
+const TEXT_MODEL = 'gemini-3.8-flash';
+
+// Voice design is sensitive to the wording of the description: some prompts
+// (observed: "low, gravelly baritone ... measured cadence") hang or 500 while a
+// plainer rewording succeeds in ~15s -- the API's own error says "Try
+// rephrasing the prompt". On failure we ask Gemini for a simpler version.
+async function simplifyVoiceDescription(description) {
+  try {
+    const res = await getClient().models.generateContent({
+      model: TEXT_MODEL,
+      contents: `Rewrite this voice description as ONE plain, concrete sentence a voice-generation model can follow: age, gender, pitch, pace and accent in everyday words. Avoid musical or technical jargon and flowery metaphors. Output only the sentence.\n\n${description}`,
+    });
+    const text = (res.text || '').trim().replace(/^["']|["']$/g, '');
+    return text.length >= 20 ? text : description;
+  } catch (err) {
+    debugLog(`Could not simplify voice description (${err.message}); retrying with the original`);
+    return description;
+  }
 }
 
-// Best-effort: a leaked (quota-counted) voice is a smaller problem than a
-// failed request, so errors are logged and swallowed.
+// Designs a voice from a natural-language description. Observed live: ~15-25s
+// per voice normally, but prompt-dependent hangs / 500s, and a per-project
+// per-minute create quota (429 RESOURCE_EXHAUSTED -- don't design voices in
+// parallel). The SDK's own retries are disabled so the timeout is a real
+// ceiling; callers fall back to the Voice Library when this throws.
+async function designVoice({ displayName, languageCode, gender, voiceDescription }) {
+  let description = voiceDescription;
+  let lastError;
+  for (let attempt = 1; attempt <= DESIGN_ATTEMPTS; attempt++) {
+    try {
+      // The SDK's own `timeout` isn't reliably enforced (a failing prompt ran
+      // ~150s), so impose a hard ceiling. A request that completes after we gave
+      // up would leave an untracked voice behind: delete it when it lands.
+      const pending = getClient().voices.create({
+        store: true,
+        voice: {
+          type: 'VOICE_TYPE_PROMPTED',
+          display_name: displayName,
+          language_code: languageCode,
+          gender,
+          prompted: { input: description },
+        },
+      }, undefined, { timeout: DESIGN_TIMEOUT_MS, maxRetries: 0 });
+      let timedOut = false;
+      pending.then(v => { if (timedOut && v && v.id) deleteVoice(v.id); }, () => {});
+      const voice = await withTimeout(pending, DESIGN_TIMEOUT_MS, `Voice design timed out after ${DESIGN_TIMEOUT_MS / 1000}s`)
+        .catch(err => { timedOut = true; throw err; });
+      if (!voice.id) throw new Error('Voice Design did not return a voice id');
+      return voice.id;
+    } catch (err) {
+      lastError = err;
+      debugLog(`Voice design attempt ${attempt} failed: ${String(err.message).replace(/\s+/g, ' ').slice(0, 160)}`);
+      if (attempt < DESIGN_ATTEMPTS) {
+        if (err.status === 429) await sleep(20000);
+        description = await simplifyVoiceDescription(voiceDescription);
+      }
+    }
+  }
+  throw lastError;
+}
+
+// Best-effort: a leaked voice (it expires a year after last use anyway) is a
+// smaller problem than a failed request, so errors are logged and swallowed.
 async function deleteVoice(voiceId) {
+  if (!isCustomVoiceId(voiceId)) return; // prebuilt/library voices aren't ours
   try {
     await getClient().voices.delete(voiceId);
   } catch (err) {
@@ -87,21 +157,55 @@ async function deleteVoice(voiceId) {
   }
 }
 
-function libraryParams(raw) {
-  return Object.fromEntries(Object.entries(raw).filter(([, v]) => v !== undefined));
+let libraryCache = null; // { voices, fetchedAt }
+let libraryInFlight = null;
+
+// The whole prebuilt + Extended Voice Library catalog (~2,100 voices). The list
+// method can only filter on `type` and `search` (language/gender filters 400),
+// 50 per page, so crawl it once (~4s) and filter locally.
+async function loadLibrary() {
+  if (libraryCache && Date.now() - libraryCache.fetchedAt < LIBRARY_CACHE_TTL_MS) return libraryCache.voices;
+  if (!libraryInFlight) {
+    libraryInFlight = (async () => {
+      const all = [];
+      let pageToken;
+      do {
+        const res = await withBackoff(() => getClient().voices.list({
+          type_: ['prebuilt'],
+          page_size: 50,
+          ...(pageToken ? { page_token: pageToken } : {}),
+        }), 3);
+        all.push(...(res.voices || []));
+        pageToken = res.next_page_token;
+      } while (pageToken);
+      // list returns the project's own stored voices first, even when filtered.
+      const voices = all.filter(v => v.id && !isCustomVoiceId(v.id) && v.language_code)
+        .map(v => ({ id: v.id, name: v.display_name || v.id, raw: v }));
+      libraryCache = { voices, fetchedAt: Date.now() };
+      return voices;
+    })().finally(() => { libraryInFlight = null; });
+  }
+  return libraryInFlight;
 }
 
-// Lists prebuilt library voices. Returns [{ id, name, gender?, ... }].
-async function listLibraryVoices({ languageCode, gender, accent, personaKeywords, pageSize = 10 } = {}) {
-  const res = await withBackoff(() => getClient().voices.list(libraryParams({
-    language_code: languageCode ? [languageCode] : undefined,
-    gender: gender ? [gender] : undefined,
-    accent: accent ? [accent] : undefined,
-    persona: personaKeywords && personaKeywords.length ? personaKeywords : undefined,
-    type: ['prebuilt'],
-    page_size: pageSize,
-  })), 3);
-  return (res.voices || []).filter(v => v.id).map(v => ({ id: v.id, name: v.display_name || v.id, raw: v }));
+// "es-US" matches voices tagged es-US, else any es-*; case-insensitive.
+function languageMatches(voiceLang, wanted) {
+  const a = (voiceLang || '').toLowerCase();
+  const b = (wanted || '').toLowerCase();
+  if (!b) return true;
+  return a === b || a.split('-')[0] === b.split('-')[0];
+}
+
+// Library voices, optionally narrowed by language / gender / accent. When a
+// language has an exact-region match (en-US) those are preferred over siblings.
+async function listLibraryVoices({ languageCode, gender, accent, pageSize = 100 } = {}) {
+  const all = await loadLibrary();
+  let voices = all.filter(v => languageMatches(v.raw.language_code, languageCode));
+  const exact = voices.filter(v => (v.raw.language_code || '').toLowerCase() === (languageCode || '').toLowerCase());
+  if (exact.length > 0) voices = exact;
+  if (gender) voices = voices.filter(v => (v.raw.gender || '').toLowerCase() === gender.toLowerCase());
+  if (accent) voices = voices.filter(v => (v.raw.accent || '').toLowerCase().includes(accent.toLowerCase()));
+  return voices.slice(0, pageSize);
 }
 
 function keywords(text) {
@@ -125,8 +229,8 @@ function pickBestVoice(voices, { hint, exclude }) {
   return best;
 }
 
-// Progressively looser search: the tightest filter combination often returns
-// nothing, so drop filters tier by tier. Throws if nothing usable matches.
+// Progressively looser search: drop filters tier by tier. Throws if nothing
+// usable matches.
 async function findLibraryVoice({ languageCode, gender, accent, hint, exclude }) {
   const ladder = [
     { languageCode, gender, accent },
@@ -134,7 +238,7 @@ async function findLibraryVoice({ languageCode, gender, accent, hint, exclude })
     { languageCode },
   ];
   for (const filters of ladder) {
-    const voices = await listLibraryVoices({ ...filters, pageSize: 50 });
+    const voices = await listLibraryVoices({ ...filters, pageSize: 500 });
     const best = pickBestVoice(voices, { hint, exclude });
     if (best) return best;
   }
@@ -145,28 +249,29 @@ async function findLibraryVoice({ languageCode, gender, accent, hint, exclude })
 // Synthesis
 // ---------------------------------------------------------------------------
 
-// Turns with no spoken text are dropped: the API rejects an empty text item
-// outright ("400 Missing text in content of type text").
-function buildContentItems(turns, multiSpeaker) {
-  return turns
-    .filter(turn => turn.text.trim().length > 0)
-    .map(turn => {
-      const annotation = { type: 'speech_metadata' };
-      if (multiSpeaker) annotation.speaker = turn.speaker;
-      if (turn.style) annotation.style = turn.style;
-      return {
-        type: 'text',
-        text: turn.text.replace(/\[/g, '<').replace(/\]/g, '>').trim(),
-        annotations: annotation.speaker || annotation.style ? [annotation] : undefined,
-      };
-    });
+// `|reaction|` segments are backchannels: a listener's brief reaction layered
+// over the speaker. Only a two-speaker request can voice them (the model
+// assigns them to the other speaker); with a single speaker they'd be read as
+// stray text, so they are dropped there.
+function stripBackchannels(text) {
+  return text.replace(/\|[^|]*\|/g, ' ').replace(/\s{2,}/g, ' ').replace(/\s+([.,;:!?])/g, '$1').trim();
 }
 
-// A section where every turn shares one speaker must not declare a second,
-// silent voice (causes hallucinated interjections).
-function soloSpeakerLabel(turns) {
-  if (turns.length === 0) return null;
-  return turns.every(t => t.speaker === turns[0].speaker) ? turns[0].speaker : null;
+// Turns with no spoken text are dropped: the API rejects an empty text part.
+// `[` / `]` would be read as tags, so they are rewritten to `<` / `>`.
+function buildParts(turns, { multiSpeaker, backchannels }) {
+  return turns
+    .map(turn => ({ ...turn, text: backchannels ? turn.text : stripBackchannels(turn.text) }))
+    .filter(turn => turn.text.trim().length > 0)
+    .map(turn => {
+      const speechMetadata = {};
+      if (multiSpeaker) speechMetadata.speaker = turn.speaker;
+      if (turn.style) speechMetadata.style = turn.style;
+      return {
+        text: turn.text.replace(/\[/g, '<').replace(/\]/g, '>').trim(),
+        ...(Object.keys(speechMetadata).length > 0 ? { speechMetadata } : {}),
+      };
+    });
 }
 
 async function consumeStream(stream) {
@@ -181,59 +286,43 @@ async function consumeStream(stream) {
       `Gemini TTS stream stalled: no event for ${STREAM_INACTIVITY_TIMEOUT_MS / 1000}s`
     );
     if (result.done) break;
-    const event = result.value;
-    if (event && event.event_type === 'step.delta' && event.delta && event.delta.type === 'audio') {
-      if (event.delta.data) {
-        const pcm = Buffer.from(event.delta.data, 'base64');
+    const parts = (result.value && result.value.candidates && result.value.candidates[0]
+      && result.value.candidates[0].content && result.value.candidates[0].content.parts) || [];
+    let sawAudio = false;
+    for (const part of parts) {
+      if (part.inlineData && part.inlineData.data) {
+        sawAudio = true;
+        // Streaming responses are headerless 16-bit PCM (audio/l16, 24 kHz, mono).
+        const pcm = Buffer.from(part.inlineData.data, 'base64');
         chunks.push(pcm);
         totalBytes += pcm.length;
         if (totalBytes / BYTES_PER_SECOND > MAX_AUDIO_SECONDS) {
           throw new Error(`Audio exceeded ${MAX_AUDIO_SECONDS}s -- aborting a likely runaway TTS response`);
         }
       }
-    } else if (otherEvents.length < MAX_OTHER_EVENTS_LOGGED) {
-      try { otherEvents.push(JSON.stringify(event).slice(0, 500)); } catch { otherEvents.push(String(event)); }
+    }
+    if (!sawAudio && otherEvents.length < MAX_OTHER_EVENTS_LOGGED) {
+      try { otherEvents.push(JSON.stringify(result.value).slice(0, 500)); } catch { otherEvents.push(String(result.value)); }
     }
   }
   return { pcm: Buffer.concat(chunks), otherEvents };
 }
 
-/**
- * Synthesizes turns ([{ speaker, text, style? }]) to raw PCM (s16le, 24kHz,
- * mono). `voices` is [{ label, voiceId, languageCode? }] -- at most 2 distinct
- * speakers per call (a 3.8 limit). Resolves once the whole stream is consumed.
- */
-async function synthesizeTurns(turns, voices) {
-  const soloLabel = soloSpeakerLabel(turns);
-  const activeVoices = soloLabel ? voices.filter(v => v.label === soloLabel) : voices;
-  if (activeVoices.length === 0) throw new Error('No voice assigned for the section speakers');
-  if (activeVoices.length > 2) throw new Error('Gemini TTS supports at most 2 speakers per request');
-  const multiSpeaker = activeVoices.length > 1;
-  const content = buildContentItems(turns, multiSpeaker);
-  if (content.length === 0) throw new Error('No speakable text');
-
-  const params = {
+// One generateContentStream call -> raw PCM. `speechConfig` is either
+// { voiceConfig: { voice } } or { multiSpeakerVoiceConfig: {...} }.
+async function synthesizeRequest(parts, speechConfig) {
+  if (parts.length === 0) throw new Error('No speakable text');
+  const request = {
     model: TTS_MODEL,
-    input: [{ type: 'user_input', content }],
-    response_format: { type: 'audio' },
-    generation_config: {
-      speech_config: {
-        mode: 'conversational',
-        speakers: activeVoices.map(v => ({
-          ...(multiSpeaker ? { speaker: v.label } : {}),
-          voice: v.voiceId,
-          ...(v.languageCode ? { language: v.languageCode } : {}),
-        })),
-      },
-    },
-    stream: true,
+    contents: [{ role: 'user', parts }],
+    config: { responseModalities: ['AUDIO'], speechConfig },
   };
 
   const attempts = 3;
   let lastError;
   for (let attempt = 1; attempt <= attempts; attempt++) {
     try {
-      const stream = await getClient().interactions.create(params);
+      const stream = await getClient().models.generateContentStream(request);
       const { pcm, otherEvents } = await consumeStream(stream);
       if (pcm.length === 0) {
         throw new Error(otherEvents.length > 0
@@ -254,16 +343,54 @@ async function synthesizeTurns(turns, voices) {
   throw wrapped;
 }
 
+/**
+ * Synthesizes turns ([{ speaker, text, style? }]) to raw PCM (s16le, 24kHz,
+ * mono). `voices` is [{ label, voiceId }] for each distinct speaker (at most 2
+ * per call). The model detects the language from the text.
+ *
+ *  - one speaker  -> single-speaker request
+ *  - two speakers -> one multi-speaker request, with `|backchannel|` reactions
+ *                    voiced by the other speaker
+ *
+ * Designed (voice_...) voices work in multi-speaker requests even though the
+ * docs say to synthesize such turns individually.
+ */
+async function synthesizeTurns(turns, voices) {
+  const speakers = [...new Set(turns.map(t => t.speaker))];
+  const voiceFor = label => {
+    const v = voices.find(x => x.label === label);
+    if (!v) throw new Error(`No voice assigned for speaker "${label}"`);
+    return v.voiceId;
+  };
+  if (speakers.length === 0) throw new Error('No speakable text');
+  if (speakers.length > 2) throw new Error('Gemini TTS supports at most 2 speakers per request');
+
+  if (speakers.length === 1) {
+    const parts = buildParts(turns, { multiSpeaker: false, backchannels: false });
+    return synthesizeRequest(parts, { voiceConfig: { voice: voiceFor(speakers[0]) } });
+  }
+
+  // Exactly two speakers, both configured.
+  const parts = buildParts(turns, { multiSpeaker: true, backchannels: true });
+  return synthesizeRequest(parts, {
+    multiSpeakerVoiceConfig: {
+      speakerVoiceConfigs: speakers.map(label => ({ speaker: label, voiceConfig: { voice: voiceFor(label) } })),
+    },
+  });
+}
+
 module.exports = {
+  getClient,
   TTS_MODEL,
   SAMPLE_RATE,
   BYTES_PER_SECOND,
+  isCustomVoiceId,
   designVoice,
   deleteVoice,
   listLibraryVoices,
   findLibraryVoice,
-  buildContentItems,
-  soloSpeakerLabel,
+  stripBackchannels,
+  buildParts,
   synthesizeTurns,
   looksLikeModerationRejection,
 };

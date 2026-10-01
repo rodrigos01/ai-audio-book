@@ -8,7 +8,7 @@ class VoiceController {
     const normalizedGender = ['male', 'female', 'neutral'].includes((gender || '').toLowerCase())
       ? gender.toLowerCase()
       : undefined;
-    const voices = await gemini.listLibraryVoices({ languageCode, gender: normalizedGender, accent, pageSize: 100 });
+    const voices = await gemini.listLibraryVoices({ languageCode, gender: normalizedGender, accent, pageSize: 1000 });
     return voices.map(v => ({
       id: v.id,
       name: v.name,

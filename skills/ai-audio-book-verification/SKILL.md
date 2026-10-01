@@ -9,7 +9,7 @@ The AI Audiobook app is a multi-service application:
 - **Backend**: Node.js Express server on port 3005 (local) or 8080 (Cloud Run).
 - **Database**: Google Cloud Firestore (Decoupled Repository Pattern).
 - **Storage**: GCS Bucket mounted via FUSE to `/app/storage` (local: configurable).
-- **TTS**: Gemini 3.8 Flash TTS (`@google/genai` interactions/voices API, `GEMINI_API_KEY`), PCM encoded to AAC with `ffmpeg` (must be on `PATH` locally).
+- **TTS**: Gemini 3.8 Flash TTS on the Gemini Enterprise API (`@google/genai` with `enterprise: true`, service-account credentials), PCM encoded to AAC with `ffmpeg` (must be on `PATH` locally). Voice design takes ~15-25 s per voice, so a freshly cast chapter shows "Preparing voice…" for a while.
 
 ---
 
