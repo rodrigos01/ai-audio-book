@@ -42,11 +42,20 @@ const request = async (url, options = {}, token = null) => {
   return res;
 };
 
+const withAuthQuery = (url, token) => {
+  let out = url;
+  const sep = () => (out.includes('?') ? '&' : '?');
+  if (token) out += `${sep()}token=${encodeURIComponent(token)}`;
+  const localCid = getLocalClientId();
+  if (localCid) out += `${sep()}client_id=${encodeURIComponent(localCid)}`;
+  return out;
+};
+
 export const api = {
-  createTitle: async (name, aiCastingEnabled, ttsTier = 'basic', narratorVoice = null, language = 'English', token) => {
+  createTitle: async (name, aiCastingEnabled, narratorVoice = null, language = 'English', token) => {
     const res = await request(`${API_BASE}/titles`, {
       method: 'POST',
-      body: JSON.stringify({ name, ai_casting_enabled: aiCastingEnabled, tts_tier: ttsTier, narrator_voice: narratorVoice, language })
+      body: JSON.stringify({ name, ai_casting_enabled: aiCastingEnabled, narrator_voice: narratorVoice, language })
     }, token);
     if (!res.ok) throw new Error('Failed to create title');
     return res.json();
@@ -107,18 +116,20 @@ export const api = {
     if (!res.ok) throw new Error('Failed to delete chapter');
     return res.json();
   },
-  getVoices: async (tier = null, token = null) => {
-    let actualTier = tier;
-    let actualToken = token;
-    if (typeof tier === 'string' && (tier.startsWith('eyJ') || tier.length > 50) && !token) {
-      actualToken = tier;
-      actualTier = null;
-    }
-    const url = actualTier ? `${API_BASE}/voices?tier=${actualTier}` : `${API_BASE}/voices`;
-    const res = await request(url, {}, actualToken);
+  // Voice Library (Gemini prebuilt voices) for the given language.
+  getVoices: async ({ language = 'English', gender = null } = {}, token = null) => {
+    const params = new URLSearchParams({ language });
+    if (gender) params.set('gender', gender);
+    const res = await request(`${API_BASE}/voices?${params}`, {}, token);
     if (!res.ok) throw new Error('Failed to fetch voices');
     return res.json();
   },
+  // <audio>-friendly preview URLs (auth + client id ride the query string,
+  // like the HLS segment URLs).
+  getLibraryVoicePreviewUrl: (voiceId, language = 'English', token = null) =>
+    withAuthQuery(`${API_BASE}/voices/${encodeURIComponent(voiceId)}/preview?language=${encodeURIComponent(language)}`, token),
+  getVoicePreviewUrl: (titleId, character, token = null, cacheBust = '') =>
+    withAuthQuery(`${API_BASE}/titles/${titleId}/voices/${encodeURIComponent(character)}/preview${cacheBust ? `?v=${encodeURIComponent(cacheBust)}` : ''}`, token),
   prepareChapterDownload: async (chapterId, token, signal) => {
     const res = await fetch(`${API_BASE}/chapters/${chapterId}/prepare`, fetchOptions({
       method: 'POST',

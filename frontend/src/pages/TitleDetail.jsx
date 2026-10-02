@@ -28,7 +28,8 @@ export default function TitleDetail() {
   const [isChangingVoice, setIsChangingVoice] = useState(false);
   const [linkedDoc, setLinkedDoc] = useState(null); // { id: string, title: string }
   const [syncing, setSyncing] = useState(false);
-  const [castingMap, setCastingMap] = useState({}); // { "Character": "voice-id" }
+  const [castingMap, setCastingMap] = useState({}); // legacy: { "Character": "voice-id" }
+  const [voiceEdit, setVoiceEdit] = useState({ description: '', gender: 'neutral', kind: 'named' });
   const [changingCharacter, setChangingCharacter] = useState(null); // Character name being changed
   const [showAddDialog, setShowAddDialog] = useState(false);
   const [skipScriptGeneration, setSkipScriptGeneration] = useState(false);
@@ -39,16 +40,24 @@ export default function TitleDetail() {
   const { user, googleAccessToken, getToken, loginWithGoogle } = useAuth();
   const { downloads, startDownload, removeDownload } = useDownloads();
 
-  const titleTier = title?.tts_tier || 'basic';
+  const titleLanguage = title?.language || 'English';
   const filteredVoices = voices.filter(v => {
-    if (titleTier === 'pro' && v.tier !== 'pro') return false;
-    if (titleTier === 'basic' && v.tier === 'pro') return false;
-    if (filterGender && v.gender !== filterGender) return false;
-    if (filterStyle && v.style !== filterStyle) return false;
+    if (filterGender && (v.gender || '').toLowerCase() !== filterGender.toLowerCase()) return false;
+    if (filterStyle && v.persona !== filterStyle) return false;
     return true;
   });
 
-  const styleTags = [...new Set(voices.filter(v => titleTier === 'pro' ? v.tier === 'pro' : (v.tier === 'basic' || !v.tier)).map(v => v.style))].sort();
+  const styleTags = [...new Set(voices.map(v => v.persona).filter(Boolean))].sort();
+
+  // Characters shown in the cast strip: the new per-title `voices` map, plus any
+  // legacy casting_map characters (pre-Gemini-3.8 titles) not in it.
+  const titleVoices = title?.voices || {};
+  const castEntries = [
+    ...Object.entries(titleVoices).map(([name, entry]) => ({ name, entry })),
+    ...Object.keys(castingMap)
+      .filter(name => !Object.keys(titleVoices).some(k => k.toLowerCase() === name.toLowerCase()))
+      .map(name => ({ name, entry: null, legacyVoiceId: castingMap[name] })),
+  ];
 
   useEffect(() => {
     if (!user || !id) return;
@@ -102,35 +111,52 @@ export default function TitleDetail() {
   }, [id, user, voices.length]);
 
   const loadVoices = useCallback(async () => {
+    if (!title) return;
     try {
       const token = await getToken();
-      const data = await api.getVoices(null, token);
+      const data = await api.getVoices({ language: title.language || 'English' }, token);
       setVoices(data);
-      if (data.length > 0) setSelectedVoice(data[0].id);
+      if (data.length > 0) setSelectedVoice(prev => prev || data[0].id);
     } catch (e) {
       console.error(e);
     } finally {
       setLoading(false);
     }
-  }, [getToken]);
+  }, [getToken, title?.language, !!title]); // eslint-disable-line react-hooks/exhaustive-deps
 
   useEffect(() => {
     loadVoices();
   }, [loadVoices]);
 
-  const handlePreviewVoice = (voice) => {
-    if (previewingId === voice.id) {
-        setPreviewingId(null);
-        return;
-    }
-    const audio = new Audio(voice.sampleUrl);
-    setPreviewingId(voice.id);
-    audio.play();
+  const audioRef = useRef(null);
+  const playPreview = (key, url) => {
+    if (audioRef.current) { audioRef.current.pause(); audioRef.current = null; }
+    if (previewingId === key) { setPreviewingId(null); return; }
+    const audio = new Audio(url);
+    audioRef.current = audio;
+    setPreviewingId(key);
+    audio.play().catch(() => setPreviewingId(null));
     audio.onended = () => setPreviewingId(null);
     audio.onerror = () => {
-        console.error('Failed to play sample');
-        setPreviewingId(null);
+      console.error('Failed to play sample');
+      setPreviewingId(null);
     };
+  };
+
+  // Library voice sample (synthesized on first request, then cached).
+  const handlePreviewVoice = async (voice) => {
+    const token = await getToken();
+    playPreview(voice.id, api.getLibraryVoicePreviewUrl(voice.id, titleLanguage, token));
+  };
+
+  // Sample of a cast character's current voice.
+  const handlePreviewCharacter = async (character, entry, legacyVoiceId) => {
+    const token = await getToken();
+    if (!entry && legacyVoiceId) {
+      playPreview(`char:${character}`, api.getLibraryVoicePreviewUrl(legacyVoiceId, titleLanguage, token));
+      return;
+    }
+    playPreview(`char:${character}`, api.getVoicePreviewUrl(id, character, token, entry?.voiceId || ''));
   };
 
   const handleImportGoogleDoc = async () => {
@@ -208,19 +234,65 @@ export default function TitleDetail() {
     }
   };
 
+  // Picks a specific library voice for a character (pins it).
   const handleUpdateCharacterVoice = async (character, voiceId) => {
-    const newMap = { ...castingMap, [character]: voiceId };
-    setCastingMap(newMap);
+    const isLegacy = !titleVoices[character];
     setIsChangingVoice(false);
     setChangingCharacter(null);
-    
     try {
       const token = await getToken();
-      await api.updateTitle(id, { casting_map: newMap }, token);
-      // Propagation to chapters and section invalidation is now handled by the backend
+      if (isLegacy) {
+        const newMap = { ...castingMap, [character]: voiceId };
+        setCastingMap(newMap);
+        await api.updateTitle(id, { casting_map: newMap }, token);
+      } else {
+        await api.updateTitle(id, { voices: { [character]: { voiceId } } }, token);
+      }
+      // Cached audio for the affected sections is invalidated by the backend.
     } catch (err) {
       setError(err.message);
     }
+  };
+
+  // Saves an edited custom-voice description / gender / kind; the backend
+  // re-designs (or re-matches) the voice and invalidates that character's audio.
+  const handleSaveVoiceDescription = async (character) => {
+    setIsChangingVoice(false);
+    setChangingCharacter(null);
+    try {
+      const token = await getToken();
+      await api.updateTitle(id, { voices: { [character]: {
+        description: voiceEdit.description,
+        gender: voiceEdit.gender,
+        kind: voiceEdit.kind,
+      } } }, token);
+    } catch (err) {
+      setError(err.message);
+    }
+  };
+
+  // First-person narration: make this speaker use another character's voice.
+  const handleAliasVoice = async (character, aliasOf) => {
+    setIsChangingVoice(false);
+    setChangingCharacter(null);
+    try {
+      const token = await getToken();
+      await api.updateTitle(id, { voices: { [character]: { aliasOf: aliasOf || null } } }, token);
+    } catch (err) {
+      setError(err.message);
+    }
+  };
+
+  const openVoiceEditor = (character, entry) => {
+    setChangingCharacter(character);
+    setIsChangingVoice(true);
+    setFilterGender(null);
+    setFilterStyle(null);
+    setVoiceEdit({
+      description: entry?.description || '',
+      gender: entry?.gender || 'neutral',
+      kind: entry?.kind || 'named',
+    });
   };
 
   const handleRenameChapter = async (chapterId) => {
@@ -319,67 +391,72 @@ export default function TitleDetail() {
                     {title?.name || 'Loading Book...'}
                 </h2>
                 <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
-                    <span style={{
-                      fontSize: '0.75rem',
-                      padding: '4px 12px',
-                      borderRadius: '100px',
-                      backgroundColor: title?.tts_tier === 'pro' ? 'rgba(156, 39, 176, 0.15)' : 'rgba(33, 150, 243, 0.15)',
-                      color: title?.tts_tier === 'pro' ? '#d81b60' : '#1976d2',
-                      border: `1px solid ${title?.tts_tier === 'pro' ? '#d81b60' : '#1976d2'}`,
-                      fontWeight: 700
-                    }}>
-                      {title?.tts_tier === 'pro' ? 'PRO (GEMINI TTS)' : 'BASIC (CHIRP3)'}
-                    </span>
                     {title?.ai_casting_enabled && (
                         <span style={{ fontSize: '0.75rem', padding: '4px 12px', borderRadius: '100px', backgroundColor: 'var(--md-sys-color-primary-container)', color: 'var(--md-sys-color-on-primary-container)', fontWeight: 600 }}>AI CASTING ENABLED</span>
                     )}
                 </div>
             </div>
 
-            {title?.ai_casting_enabled && Object.keys(castingMap).length > 0 && (
-                <div style={{ 
-                    display: 'flex', 
-                    overflowX: 'auto', 
-                    gap: '1rem', 
-                    paddingBottom: '1rem', 
+            {title?.ai_casting_enabled && castEntries.length > 0 && (
+                <div style={{
+                    display: 'flex',
+                    overflowX: 'auto',
+                    gap: '1rem',
+                    paddingBottom: '1rem',
                     marginBottom: '1rem',
                     scrollbarWidth: 'none',
                     msOverflowStyle: 'none',
                     maxWidth: '100%'
                 }} className="no-scrollbar">
-                    {Object.entries(castingMap).map(([character, voiceId]) => {
-                        const voice = voices.find(v => {
-                          if (!voiceId) return false;
-                          const vId = v.id.toLowerCase();
-                          const targetId = voiceId.toLowerCase();
-                          return vId === targetId || vId.endsWith(`-${targetId}`) || targetId.endsWith(`-${vId}`);
-                        });
+                    {castEntries.map(({ name: character, entry, legacyVoiceId }) => {
+                        const libraryVoice = entry?.origin === 'library' || !entry
+                          ? voices.find(v => v.id.toLowerCase() === (entry?.voiceId || legacyVoiceId || '').toLowerCase())
+                          : null;
                         const isChanging = changingCharacter === character;
+                        const resolving = entry && !entry.voiceId && !entry.aliasOf;
+                        const kindLabel = !entry ? 'Legacy' : (entry.kind === 'supporting' ? 'Supporting' : 'Named');
+                        const voiceLabel = !entry
+                          ? (libraryVoice?.name || 'Library voice')
+                          : entry.aliasOf ? `Same voice as ${entry.aliasOf}`
+                          : resolving ? 'Preparing voice…'
+                          : entry.origin === 'design' ? 'Custom voice'
+                          : `${libraryVoice?.name || 'Library voice'}${entry.fallback ? ' (fallback)' : ''}`;
                         return (
-                            <div key={character} style={{ minWidth: '280px' }}>
-                                <div style={{ 
-                                    padding: '1rem', 
-                                    borderRadius: '1rem', 
+                            <div key={character} style={{ minWidth: '280px', maxWidth: '320px' }}>
+                                <div style={{
+                                    padding: '1rem',
+                                    borderRadius: '1rem',
                                     backgroundColor: 'var(--md-sys-color-surface-container-high)',
                                     border: isChanging ? '2px solid var(--md-sys-color-primary)' : '1px solid var(--md-sys-color-outline-variant)',
                                     display: 'flex',
                                     flexDirection: 'column',
-                                    gap: '0.75rem'
+                                    gap: '0.5rem'
                                 }}>
                                     <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
                                         <div className="flex-col">
-                                            <span className="text-xs" style={{ color: 'var(--md-sys-color-primary)', fontWeight: 600 }}>{character}</span>
-                                            <span style={{ fontWeight: 600 }}>{voice?.name || 'Unknown'}</span>
+                                            <span className="text-xs" style={{ color: 'var(--md-sys-color-primary)', fontWeight: 600 }}>
+                                                {character} · {kindLabel}
+                                            </span>
+                                            <span style={{ fontWeight: 600 }}>{voiceLabel}</span>
                                         </div>
                                         <div style={{ display: 'flex', gap: '0.25rem' }}>
-                                            <md-icon-button onClick={() => handlePreviewVoice(voice)} style={{'--md-icon-button-icon-size': '20px'}}>
-                                                <md-icon><span className="material-symbols-outlined">{previewingId === voice?.id ? 'pause' : 'play_arrow'}</span></md-icon>
+                                            <md-icon-button
+                                                disabled={resolving || undefined}
+                                                onClick={() => handlePreviewCharacter(character, entry, legacyVoiceId)}
+                                                style={{'--md-icon-button-icon-size': '20px'}}
+                                            >
+                                                <md-icon><span className="material-symbols-outlined">{previewingId === `char:${character}` ? 'pause' : 'play_arrow'}</span></md-icon>
                                             </md-icon-button>
-                                            <md-icon-button onClick={() => { setChangingCharacter(character); setIsChangingVoice(true); setFilterGender(null); setFilterStyle(null); }} style={{'--md-icon-button-icon-size': '20px'}}>
+                                            <md-icon-button onClick={() => openVoiceEditor(character, entry)} style={{'--md-icon-button-icon-size': '20px'}}>
                                                 <md-icon><span className="material-symbols-outlined">edit</span></md-icon>
                                             </md-icon-button>
                                         </div>
                                     </div>
+                                    {entry?.description && (
+                                        <span className="text-xs" style={{ color: 'var(--md-sys-color-on-surface-variant)', lineHeight: 1.4 }}>
+                                            {entry.description}
+                                        </span>
+                                    )}
                                 </div>
                             </div>
                         );
@@ -553,15 +630,68 @@ export default function TitleDetail() {
                     <div className="flex-row" style={{ justifyContent: 'space-between', alignItems: 'center', marginBottom: '2rem' }}>
                     <h2 style={{ margin: 0, fontSize: '1.5rem', display: 'flex', alignItems: 'center', gap: '0.75rem' }}>
                         <md-icon><span className="material-symbols-outlined">person_search</span></md-icon>
-                        Change Voice for {changingCharacter}
+                        Voice for {changingCharacter}
                     </h2>
                     <md-icon-button onClick={() => setIsChangingVoice(false)}>
                         <md-icon><span className="material-symbols-outlined">close</span></md-icon>
                     </md-icon-button>
                     </div>
+                    {titleVoices[changingCharacter] && Object.keys(titleVoices).length > 1 && (
+                      <label style={{ display: 'flex', flexDirection: 'column', gap: '0.35rem', fontSize: '0.85rem', marginBottom: '1.5rem' }}>
+                        <span style={{ fontWeight: 600 }}>Same voice as</span>
+                        <span className="text-xs" style={{ color: 'var(--md-sys-color-on-surface-variant)' }}>
+                          For first-person narration, link the narrator to the character telling the story.
+                        </span>
+                        <select
+                          value={titleVoices[changingCharacter]?.aliasOf || ''}
+                          onChange={(e) => handleAliasVoice(changingCharacter, e.target.value)}
+                          style={{ height: '44px', borderRadius: '0.75rem', padding: '0 0.75rem' }}
+                        >
+                          <option value="">None (its own voice)</option>
+                          {Object.keys(titleVoices).filter(n => n !== changingCharacter && !titleVoices[n]?.aliasOf).map(n => (
+                            <option key={n} value={n}>{n}</option>
+                          ))}
+                        </select>
+                      </label>
+                    )}
+                    {titleVoices[changingCharacter] && !titleVoices[changingCharacter].aliasOf && (
+                      <div className="flex-col gap-4" style={{ backgroundColor: 'var(--md-sys-color-surface-container-highest)', padding: '1rem', borderRadius: '1rem', marginBottom: '1.5rem' }}>
+                        <span style={{ fontWeight: 600 }}>Custom voice</span>
+                        <span className="text-xs" style={{ color: 'var(--md-sys-color-on-surface-variant)' }}>
+                          Describe only how the voice sounds (age, pitch, pace, accent). Saving designs a new voice for this character.
+                        </span>
+                        <textarea
+                          value={voiceEdit.description}
+                          onChange={(e) => setVoiceEdit(v => ({ ...v, description: e.target.value }))}
+                          rows={4}
+                          style={{ width: '100%', padding: '0.75rem', borderRadius: '0.75rem', border: '1px solid var(--md-sys-color-outline-variant)', backgroundColor: 'var(--md-sys-color-surface-container)', color: 'var(--md-sys-color-on-surface)', fontFamily: 'inherit', fontSize: '0.9rem', resize: 'vertical' }}
+                        />
+                        <div style={{ display: 'flex', gap: '1rem', flexWrap: 'wrap' }}>
+                          <label style={{ display: 'flex', flexDirection: 'column', gap: '0.25rem', fontSize: '0.8rem' }}>
+                            Gender
+                            <select value={voiceEdit.gender} onChange={(e) => setVoiceEdit(v => ({ ...v, gender: e.target.value }))} style={{ height: '40px', borderRadius: '0.5rem', padding: '0 0.5rem' }}>
+                              <option value="female">Female</option>
+                              <option value="male">Male</option>
+                              <option value="neutral">Neutral</option>
+                            </select>
+                          </label>
+                          <label style={{ display: 'flex', flexDirection: 'column', gap: '0.25rem', fontSize: '0.8rem' }}>
+                            Voice type
+                            <select value={voiceEdit.kind} onChange={(e) => setVoiceEdit(v => ({ ...v, kind: e.target.value }))} style={{ height: '40px', borderRadius: '0.5rem', padding: '0 0.5rem' }}>
+                              <option value="named">Named (custom-designed)</option>
+                              <option value="supporting">Supporting (library)</option>
+                            </select>
+                          </label>
+                        </div>
+                        <md-filled-button onClick={() => handleSaveVoiceDescription(changingCharacter)} disabled={!voiceEdit.description.trim() || undefined}>
+                          Save voice
+                        </md-filled-button>
+                      </div>
+                    )}
+                    <h3 style={{ fontSize: '1rem', fontWeight: 600, margin: '0 0 0.75rem' }}>Or pick a library voice</h3>
                     <VoiceSelector 
                       onSelect={(vid) => handleUpdateCharacterVoice(changingCharacter, vid)}
-                      currentVoiceId={castingMap[changingCharacter]}
+                      currentVoiceId={titleVoices[changingCharacter]?.origin === 'library' ? titleVoices[changingCharacter]?.voiceId : castingMap[changingCharacter]}
                       filteredVoices={filteredVoices}
                       filterGender={filterGender}
                       setFilterGender={setFilterGender}
@@ -793,18 +923,18 @@ function VoiceSelector({
               <md-chip-set>
                   <md-filter-chip 
                       label="Male" 
-                      selected={filterGender === 'Male' || undefined}
-                      onClick={() => setFilterGender(filterGender === 'Male' ? null : 'Male')}
+                      selected={filterGender === 'male' || undefined}
+                      onClick={() => setFilterGender(filterGender === 'male' ? null : 'male')}
                   ></md-filter-chip>
                   <md-filter-chip 
                       label="Female" 
-                      selected={filterGender === 'Female' || undefined}
-                      onClick={() => setFilterGender(filterGender === 'Female' ? null : 'Female')}
+                      selected={filterGender === 'female' || undefined}
+                      onClick={() => setFilterGender(filterGender === 'female' ? null : 'female')}
                   ></md-filter-chip>
               </md-chip-set>
           </div>
           <div style={{ display: 'flex', alignItems: 'flex-start', gap: '1rem' }}>
-              <span style={{ fontSize: '0.8rem', fontWeight: 500, minWidth: '60px', marginTop: '8px' }}>Style:</span>
+              <span style={{ fontSize: '0.8rem', fontWeight: 500, minWidth: '60px', marginTop: '8px' }}>Persona:</span>
               <md-chip-set style={{ display: 'flex', flexWrap: 'wrap' }}>
                   {styleTags.map(tag => (
                       <md-filter-chip 
@@ -840,8 +970,8 @@ function VoiceSelector({
                 <span style={{ fontWeight: 600, fontSize: '0.95rem', color: currentVoiceId === voice.id ? 'var(--md-sys-color-on-primary-container)' : 'var(--md-sys-color-on-surface)' }}>{voice.name}</span>
                 <div className="flex-row gap-2">
                   <span className="text-xs" style={{ padding: '2px 8px', borderRadius: '4px', backgroundColor: 'rgba(0,0,0,0.2)', color: 'var(--md-sys-color-on-surface-variant)' }}>{voice.gender}</span>
-                  <span className="text-xs" style={{ padding: '2px 8px', borderRadius: '4px', backgroundColor: 'rgba(0,0,0,0.2)', color: 'var(--md-sys-color-secondary)' }}>{voice.quality}</span>
-                  <span className="text-xs" style={{ padding: '2px 8px', borderRadius: '4px', backgroundColor: 'var(--md-sys-color-tertiary-container)', color: 'var(--md-sys-color-on-tertiary-container)' }}>{voice.style}</span>
+                  <span className="text-xs" style={{ padding: '2px 8px', borderRadius: '4px', backgroundColor: 'rgba(0,0,0,0.2)', color: 'var(--md-sys-color-secondary)' }}>{voice.accent}</span>
+                  <span className="text-xs" style={{ padding: '2px 8px', borderRadius: '4px', backgroundColor: 'var(--md-sys-color-tertiary-container)', color: 'var(--md-sys-color-on-tertiary-container)' }}>{voice.persona}</span>
                 </div>
               </div>
               <div style={{ display: 'flex', gap: '0.25rem' }}>
@@ -870,7 +1000,6 @@ function VoiceSelector({
               borderTop: 'none'
             }}>
               <div style={{ padding: '1rem', fontSize: '0.875rem', color: 'var(--md-sys-color-on-surface-variant)', lineHeight: '1.4' }}>
-                  <div style={{ fontStyle: 'italic', marginBottom: '0.5rem' }}>"{voice.personality}"</div>
                   <div style={{ opacity: 0.8 }}>{voice.description}</div>
               </div>
             </div>

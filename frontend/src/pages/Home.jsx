@@ -15,7 +15,6 @@ export default function Home() {
   const [titles, setTitles] = useState([]);
   const [newTitleName, setNewTitleName] = useState('');
   const [aiCastingEnabled, setAiCastingEnabled] = useState(false);
-  const [ttsTier, setTtsTier] = useState('basic'); // 'basic' | 'pro'
   const [language, setLanguage] = useState('English');
   const [voices, setVoices] = useState([]);
   const [selectedVoice, setSelectedVoice] = useState('');
@@ -27,23 +26,16 @@ export default function Home() {
   const navigate = useNavigate();
   const { user, getToken } = useAuth();
 
+  // Voice Library voices for the chosen language (narrator picker).
   useEffect(() => {
-    api.getVoices().then(data => {
+    api.getVoices({ language }).then(data => {
       setVoices(data);
-      const basicVoices = data.filter(v => v.tier === 'basic' || !v.tier);
-      if (basicVoices.length > 0) setSelectedVoice(basicVoices[0].id);
+      // With AI casting the narrator defaults to a custom-designed voice ('');
+      // otherwise a concrete voice is required.
+      setSelectedVoice(prev => (data.some(v => v.id === prev) || (aiCastingEnabled && prev === '')) ? prev : (aiCastingEnabled ? '' : (data[0]?.id || '')));
     }).catch(console.error);
-  }, []);
-
-  const currentTierVoices = voices.filter(v => ttsTier === 'pro' ? v.tier === 'pro' : (v.tier === 'basic' || !v.tier));
-
-  const handleTierChange = (tier) => {
-    setTtsTier(tier);
-    const tierVoices = voices.filter(v => tier === 'pro' ? v.tier === 'pro' : (v.tier === 'basic' || !v.tier));
-    if (tierVoices.length > 0) {
-      setSelectedVoice(tierVoices[0].id);
-    }
-  };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [language]);
 
   useEffect(() => {
     if (!user) return;
@@ -78,10 +70,9 @@ export default function Home() {
     if (!newTitleName.trim()) return;
     try {
       const token = await getToken();
-      await api.createTitle(newTitleName, aiCastingEnabled, ttsTier, selectedVoice, language, token);
+      await api.createTitle(newTitleName, aiCastingEnabled, selectedVoice || null, language, token);
       setNewTitleName('');
       setAiCastingEnabled(false);
-      setTtsTier('basic');
       setLanguage('English');
     } catch (e) {
       console.error(e);
@@ -147,60 +138,16 @@ export default function Home() {
                 onClick={() => {
                   const nextState = !aiCastingEnabled;
                   setAiCastingEnabled(nextState);
-                  if (!nextState) handleTierChange('basic');
+                  // AI casting designs the narrator's voice unless one is picked.
+                  setSelectedVoice(nextState ? '' : (voices[0]?.id || ''));
                 }}
               ></md-switch>
             </div>
 
-            {/* Audio Tier Selector (Only shown when AI Casting is enabled) */}
-            {aiCastingEnabled && (
-              <div style={{ display: 'flex', flexDirection: 'column', gap: '0.35rem', flex: '1 1 240px' }}>
-                <label style={{ fontSize: '0.8rem', fontWeight: 600, color: 'var(--md-sys-color-on-surface-variant)' }}>Audio Quality Tier</label>
-                <div style={{ display: 'flex', gap: '0.5rem', backgroundColor: 'var(--md-sys-color-surface-container-high)', padding: '0.35rem', borderRadius: '0.75rem', border: '1px solid var(--md-sys-color-outline-variant)' }}>
-                  <button
-                    type="button"
-                    onClick={() => handleTierChange('basic')}
-                    style={{
-                      flex: 1,
-                      padding: '0.5rem 0.75rem',
-                      borderRadius: '0.5rem',
-                      border: 'none',
-                      backgroundColor: ttsTier === 'basic' ? 'var(--md-sys-color-primary)' : 'transparent',
-                      color: ttsTier === 'basic' ? 'var(--md-sys-color-on-primary)' : 'var(--md-sys-color-on-surface)',
-                      fontWeight: 600,
-                      cursor: 'pointer',
-                      fontSize: '0.875rem',
-                      transition: 'all 0.2s ease'
-                    }}
-                  >
-                    Basic (Chirp3)
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => handleTierChange('pro')}
-                    style={{
-                      flex: 1,
-                      padding: '0.5rem 0.75rem',
-                      borderRadius: '0.5rem',
-                      border: 'none',
-                      backgroundColor: ttsTier === 'pro' ? 'var(--md-sys-color-primary)' : 'transparent',
-                      color: ttsTier === 'pro' ? 'var(--md-sys-color-on-primary)' : 'var(--md-sys-color-on-surface)',
-                      fontWeight: 600,
-                      cursor: 'pointer',
-                      fontSize: '0.875rem',
-                      transition: 'all 0.2s ease'
-                    }}
-                  >
-                    Pro (Gemini-TTS)
-                  </button>
-                </div>
-              </div>
-            )}
-
             {/* Voice Options Dropdown */}
             <div style={{ display: 'flex', flexDirection: 'column', gap: '0.35rem', flex: '1 1 240px' }}>
               <label style={{ fontSize: '0.8rem', fontWeight: 600, color: 'var(--md-sys-color-on-surface-variant)' }}>
-                {aiCastingEnabled ? 'Default Narrator Voice' : 'Voice'} ({aiCastingEnabled && ttsTier === 'pro' ? 'Gemini TTS' : 'Chirp3'})
+                {aiCastingEnabled ? 'Narrator Voice' : 'Voice'}
               </label>
               <select
                 value={selectedVoice}
@@ -216,9 +163,10 @@ export default function Home() {
                   cursor: 'pointer'
                 }}
               >
-                {currentTierVoices.map(v => (
+                {aiCastingEnabled && <option value="">Custom-designed by AI</option>}
+                {voices.map(v => (
                   <option key={v.id} value={v.id}>
-                    {v.name} ({v.gender} - {v.style})
+                    {v.name} ({[v.gender, v.persona].filter(Boolean).join(' - ')})
                   </option>
                 ))}
               </select>
@@ -315,17 +263,19 @@ export default function Home() {
                       <>
                         <div slot="headline" style={{ fontWeight: 500, display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
                           <span>{title.name}</span>
-                          <span style={{
-                            fontSize: '0.7rem',
-                            fontWeight: 700,
-                            padding: '0.15rem 0.5rem',
-                            borderRadius: '0.5rem',
-                            backgroundColor: title.tts_tier === 'pro' ? 'rgba(156, 39, 176, 0.15)' : 'rgba(33, 150, 243, 0.15)',
-                            color: title.tts_tier === 'pro' ? '#d81b60' : '#1976d2',
-                            border: `1px solid ${title.tts_tier === 'pro' ? '#d81b60' : '#1976d2'}`
-                          }}>
-                            {title.tts_tier === 'pro' ? 'PRO (Gemini TTS)' : 'BASIC (Chirp3)'}
-                          </span>
+                          {title.ai_casting_enabled && (
+                            <span style={{
+                              fontSize: '0.7rem',
+                              fontWeight: 700,
+                              padding: '0.15rem 0.5rem',
+                              borderRadius: '0.5rem',
+                              backgroundColor: 'rgba(156, 39, 176, 0.15)',
+                              color: '#d81b60',
+                              border: '1px solid #d81b60'
+                            }}>
+                              AI CAST
+                            </span>
+                          )}
                         </div>
                         <div slot="supporting-text">Created on {title.created_at?.toDate ? title.created_at.toDate().toLocaleDateString() : (title.created_at ? new Date(title.created_at).toLocaleDateString() : 'Just now')}</div>
                       </>

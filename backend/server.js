@@ -48,13 +48,6 @@ if (fs.existsSync(frontendDist)) {
   debugLog(`Frontend dist not found at: ${frontendDist}`);
 }
 
-// Voice preview samples stay on local/FUSE-mounted disk regardless of
-// AUDIO_STORE_DRIVER — they're a separate, much smaller asset than chapter audio.
-const samplesDir = path.join(path.resolve(process.env.STORAGE_BASE_PATH || __dirname), 'samples');
-if (fs.existsSync(samplesDir)) {
-  app.use('/samples', express.static(samplesDir));
-}
-
 app.use(cors({
   origin: function (origin, callback) {
     if (!origin) return callback(null, true);

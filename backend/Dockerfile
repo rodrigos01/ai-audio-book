@@ -1,6 +1,8 @@
 # Lightweight Dockerfile for the AI Audio Book API service
 FROM node:20-slim
 WORKDIR /app
+# ffmpeg encodes Gemini TTS PCM output to AAC segments (see services/audioEncoder.js)
+RUN apt-get update && apt-get install -y --no-install-recommends ffmpeg && rm -rf /var/lib/apt/lists/*
 ENV NODE_ENV=production
 ENV PORT=8080
 ENV STORAGE_BASE_PATH=/app/storage
