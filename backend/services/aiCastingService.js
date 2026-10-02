@@ -52,6 +52,9 @@ class AICastingService {
             language = 'English',
             skipScriptGeneration = false,
             hasNarratorVoice = false,
+            // Called as soon as the cast is known (before the slower script
+            // generation), so voice design can overlap with it.
+            onCast = null,
         } = options;
 
         const genAI = getClient();
@@ -159,6 +162,14 @@ class AICastingService {
                 fallback: false,
                 hash: null,
             };
+        }
+
+        if (onCast) {
+            onCast({
+                new_voices: newVoices,
+                narrator_is_character: aliasTarget || null,
+                narrator_personality: castingResponse.narrator_personality || null,
+            });
         }
 
         let script = null;

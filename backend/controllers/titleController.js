@@ -197,33 +197,34 @@ class TitleController {
   }
 
   async _processAiCastingInBackground({ chapterId, titleId, finalContent, title, skipScriptGeneration = false }) {
+    let sectionsInserted = false;
     try {
       debugLog(`AI Casting background: Auto-casting new chapter ${chapterId} for ${title.name}${skipScriptGeneration ? ' (script generation skipped)' : ''}`);
 
+      // Voices are designed / matched DURING casting: as soon as phase 1 knows the
+      // cast, design starts and overlaps with script generation. The chapter stays
+      // `in_progress` (unplayable) until both are done, so nobody ever waits on
+      // voice design while streaming.
+      let voicesReady = Promise.resolve();
+      sectionsInserted = false;
       const result = await aiCasting.analyzeChapter(finalContent, {
         existingVoices: title.voices || {},
         language: title.language || 'English',
         skipScriptGeneration,
         hasNarratorVoice: !!title.narrator_voice,
+        onCast: (cast) => { voicesReady = this._storeCastAndResolveVoices({ titleId, title, cast }); },
       });
-
-      for (const [charName, entry] of Object.entries(result.new_voices)) {
-        await firestoreStore.setTitleVoice(titleId, charName, entry);
-      }
-      // The user picked a narrator voice AND the narrator is a first-person
-      // character: that character must use the same voice, not a new one.
-      if (title.narrator_voice && result.narrator_is_character && result.new_voices[result.narrator_is_character]) {
-        await firestoreStore.setTitleVoice(titleId, result.narrator_is_character, {
-          ...result.new_voices[result.narrator_is_character],
-          origin: 'library', voiceId: legacyVoiceToLibraryId(title.narrator_voice), pinned: true,
-        });
-      }
-      if (!title.narrator_personality && result.narrator_personality) {
-        await firestoreStore.updateTitle(titleId, { narrator_personality: result.narrator_personality });
-      }
 
       const processedContent = skipScriptGeneration ? finalContent : cleanScript(result.script);
       if (!processedContent) throw new Error('AI casting produced an empty script');
+
+      const sectionItems = buildSectionItems(chapterId, splitMultiSpeakerIntoSections(processedContent));
+      await firestoreStore.insertSections(sectionItems);
+      sectionsInserted = true;
+
+      // Wait for voice design / matching (started after phase 1). Never rejects:
+      // a character whose design fails falls back to a library voice.
+      await voicesReady;
 
       await firestoreStore.updateChapter(chapterId, {
         content: processedContent,
@@ -232,24 +233,44 @@ class TitleController {
         delivery_instruction: result.delivery_instruction || null
       });
 
-      const sectionItems = buildSectionItems(chapterId, splitMultiSpeakerIntoSections(processedContent));
-      await firestoreStore.insertSections(sectionItems);
-
-      // Resolve (design / library-match) voices now so first play isn't blocked
-      // on it. Best-effort: synthesis resolves lazily if this hasn't finished.
-      firestoreStore.getTitleById(titleId)
-        .then(fresh => fresh && resolveAllVoices(fresh))
-        .catch(err => debugLog(`Eager voice resolution failed for ${titleId}: ${err.message}`));
-
       debugLog(`AI Casting background completed successfully for chapter ${chapterId}`);
     } catch (castError) {
       debugLog(`Auto-casting background failed for chapter ${chapterId}, falling back to standard: ${castError.message}`);
-      const sectionItems = buildSectionItems(chapterId, breakContentIntoSections(finalContent));
-      await firestoreStore.insertSections(sectionItems);
+      if (!sectionsInserted) {
+        const sectionItems = buildSectionItems(chapterId, breakContentIntoSections(finalContent));
+        await firestoreStore.insertSections(sectionItems);
+      }
 
       await firestoreStore.updateChapter(chapterId, {
         ai_casting_status: 'failed'
       });
+    }
+  }
+
+  // Persists a chapter's newly identified characters and resolves every
+  // unresolved voice on the title (design for named characters, library match
+  // for supporting ones). Runs while the script is still being generated.
+  // Never rejects.
+  async _storeCastAndResolveVoices({ titleId, title, cast }) {
+    try {
+      for (const [charName, entry] of Object.entries(cast.new_voices)) {
+        await firestoreStore.setTitleVoice(titleId, charName, entry);
+      }
+      // The user picked a narrator voice AND the narrator is a first-person
+      // character: that character must use the same voice, not a new one.
+      if (title.narrator_voice && cast.narrator_is_character && cast.new_voices[cast.narrator_is_character]) {
+        await firestoreStore.setTitleVoice(titleId, cast.narrator_is_character, {
+          ...cast.new_voices[cast.narrator_is_character],
+          origin: 'library', voiceId: legacyVoiceToLibraryId(title.narrator_voice), pinned: true,
+        });
+      }
+      if (!title.narrator_personality && cast.narrator_personality) {
+        await firestoreStore.updateTitle(titleId, { narrator_personality: cast.narrator_personality });
+      }
+      const fresh = await firestoreStore.getTitleById(titleId);
+      if (fresh) await resolveAllVoices(fresh);
+    } catch (err) {
+      debugLog(`Voice resolution during casting failed for ${titleId}: ${err.message}`);
     }
   }
 
