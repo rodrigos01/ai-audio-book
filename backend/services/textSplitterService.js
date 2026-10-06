@@ -1,7 +1,31 @@
 const { v4: uuidv4 } = require('uuid');
+const { parseSpeakerLine, parseScriptTurns } = require('./scriptText');
+
+// Splits a single unpunctuated run-on that alone exceeds the byte budget on
+// word boundaries (a lone word longer than the budget is kept whole).
+function splitOversizedSentence(sentence, prefix, maxBytes) {
+  const budget = Math.max(1, maxBytes - Buffer.byteLength(prefix, 'utf8'));
+  const pieces = [];
+  let current = '';
+  for (const word of sentence.split(/\s+/)) {
+    const candidate = current ? `${current} ${word}` : word;
+    if (Buffer.byteLength(candidate, 'utf8') > budget && current) {
+      pieces.push(current);
+      current = word;
+    } else {
+      current = candidate;
+    }
+  }
+  if (current) pieces.push(current);
+  return pieces;
+}
 
 function splitTextBySentences(bodyText, prefix = '', maxBytes = 600) {
-  const sentences = bodyText.split(/(?<=[.!?])\s+/);
+  const sentences = bodyText.split(/(?<=[.!?])\s+/).flatMap(sentence =>
+    Buffer.byteLength(`${prefix}${sentence}`, 'utf8') > maxBytes
+      ? splitOversizedSentence(sentence, prefix, maxBytes)
+      : [sentence]
+  );
   const chunks = [];
   let currentSub = '';
 
@@ -35,50 +59,23 @@ function breakContentIntoSections(content, maxBytes = 600) {
   return sections;
 }
 
-function splitSSMLIntoSections(ssml) {
-  if (!ssml) return [];
-  let clean = ssml.replace(/```[a-z]*\s*/gi, '').replace(/```/gi, '').trim();
-  clean = clean.replace(/<\/?speak>/gi, '').trim();
-
-  const parts = clean.split(/<\/p>/i);
-  const validSections = [];
-
-  for (let p of parts) {
-    let trimmed = p.trim();
-    if (!trimmed) continue;
-    if (!trimmed.toLowerCase().startsWith('<p>')) {
-      trimmed = `<p>${trimmed}`;
-    }
-    if (!trimmed.toLowerCase().endsWith('</p>')) {
-      trimmed = `${trimmed}</p>`;
-    }
-
-    const speakableText = trimmed.replace(/<[^>]*>/g, '').trim();
-    if (speakableText.length > 0) {
-      validSections.push(`<speak>${trimmed}</speak>`);
-    }
-  }
-
-  return validSections;
-}
-
 function splitMultiSpeakerIntoSections(scriptText, maxBytes = 800, maxSpeakers = 2) {
   if (!scriptText) return [];
 
   const cleanText = scriptText.replace(/```[a-z]*\s*/gi, '').replace(/```/gi, '').trim();
-  const rawLines = cleanText.split(/\r?\n/).map(l => l.trim()).filter(Boolean);
 
+  // Each turn keeps its `Style:` line (repeated on every chunk if a long turn
+  // is split) so the delivery style applies to the whole turn.
   const turns = [];
-  for (const line of rawLines) {
-    const match = line.match(/^([a-zA-Z0-9_ -]{1,40}):\s*(.*)$/);
-    const speaker = match ? match[1].trim() : 'Narrator';
-    const dialogue = match ? match[2].trim() : line;
-    const fullLine = `${speaker}: ${dialogue}`;
+  for (const { speaker, text: dialogue, style } of parseScriptTurns(cleanText)) {
+    if (!dialogue) continue;
+    const styleLine = style ? `\nStyle: ${style}` : '';
+    const fullLine = `${speaker}: ${dialogue}${styleLine}`;
 
     if (Buffer.byteLength(fullLine, 'utf8') > maxBytes) {
-      const chunks = splitTextBySentences(dialogue, `${speaker}: `, maxBytes);
-      for (const chunk of chunks) {
-        turns.push({ speaker, fullLine: chunk });
+      const budget = maxBytes - Buffer.byteLength(styleLine, 'utf8');
+      for (const chunk of splitTextBySentences(dialogue, `${speaker}: `, budget)) {
+        turns.push({ speaker, fullLine: `${chunk}${styleLine}` });
       }
     } else {
       turns.push({ speaker, fullLine });
@@ -115,10 +112,20 @@ function splitMultiSpeakerIntoSections(scriptText, maxBytes = 800, maxSpeakers =
   return sections;
 }
 
+// Approximate spoken text of a section: strip speaker labels, leading style
+// cues and inline <tags> so the duration estimate isn't inflated by markup.
+function spokenTextOf(text) {
+  return parseScriptTurns(text)
+    .map(t => t.text)
+    .join(' ')
+    .replace(/<[^>]*>/g, '')
+    .trim();
+}
+
 function buildSectionItems(chapterId, sectionTexts) {
   let est = 0;
   return sectionTexts.map((text, index) => {
-    const spokenText = (text || '').replace(/<[^>]*>/g, '').trim();
+    const spokenText = spokenTextOf(text);
     const duration = spokenText.length > 0 ? spokenText.length / 14.5 + 0.5 : 0.5;
     const startTime = est;
     est += duration;
@@ -136,7 +143,7 @@ function buildSectionItems(chapterId, sectionTexts) {
 
 module.exports = {
   breakContentIntoSections,
-  splitSSMLIntoSections,
   splitMultiSpeakerIntoSections,
-  buildSectionItems
+  buildSectionItems,
+  spokenTextOf
 };

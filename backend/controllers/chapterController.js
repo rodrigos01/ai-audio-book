@@ -1,7 +1,8 @@
 const firestoreStore = require('../stores/firestoreStore');
 const audioStore = require('../stores/audioStore');
-const { breakContentIntoSections, splitSSMLIntoSections, buildSectionItems } = require('../services/textSplitterService');
-const { deleteChapterSections, synthesizeAndCacheSection } = require('../services/ttsService');
+const { breakContentIntoSections, splitMultiSpeakerIntoSections, buildSectionItems, spokenTextOf } = require('../services/textSplitterService');
+const { isLegacySsml } = require('../services/scriptText');
+const { deleteChapterSections, synthesizeAndCacheSection, synthesizeOrSilence } = require('../services/ttsService');
 const { debugLog } = require('../services/logger');
 const { NotFoundError, ForbiddenError } = require('../utils/errors');
 
@@ -14,13 +15,12 @@ const WORDS_PER_SECOND = 6500 / (45 * 60);
 const HLS_DURATION_PADDING_SECONDS = 120;
 
 class ChapterController {
-  async updateChapter({ id, name, content, is_ssml, clientId, userId }) {
+  async updateChapter({ id, name, content, clientId, userId }) {
     const chapter = await firestoreStore.getChapterWithTitle(id, clientId, userId);
     if (!chapter) throw new NotFoundError('Chapter not found or access denied');
 
     const updateData = {};
     if (name !== undefined) updateData.name = name;
-    if (is_ssml !== undefined) updateData.is_ssml = is_ssml;
     if (content !== undefined) updateData.content = content;
 
     await firestoreStore.updateChapter(id, updateData);
@@ -28,8 +28,11 @@ class ChapterController {
     if (content !== undefined) {
       await deleteChapterSections(id);
 
-      const newSections = (is_ssml || chapter.is_ssml)
-        ? splitSSMLIntoSections(content)
+      // Script-formatted content ("Speaker: text") from AI casting keeps its
+      // speaker structure; plain prose is split by paragraph/sentence.
+      const isScript = chapter.ai_casting_status === 'completed' && !isLegacySsml(content);
+      const newSections = isScript
+        ? splitMultiSpeakerIntoSections(content)
         : breakContentIntoSections(content);
 
       const sectionData = buildSectionItems(id, newSections);
@@ -68,8 +71,15 @@ class ChapterController {
 
       if (Date.now() > deadline) break;
 
-      const audioBuffer = await synthesizeAndCacheSection(title, chapter, section);
-      if (audioBuffer) generatedCount++;
+      try {
+        await synthesizeAndCacheSection(title, chapter, section);
+        generatedCount++;
+      } catch (e) {
+        // A failed section must not count as generated (it would download as
+        // silence); stop here and let the client poll/retry.
+        debugLog(`prepareChapter: section ${section.id} failed: ${e.message}`);
+        break;
+      }
     }
 
     return {
@@ -103,7 +113,7 @@ class ChapterController {
       if (isClosedCheck && isClosedCheck()) break;
 
       const audioBuffer = await audioStore.readSectionAudio(section.id)
-        || await synthesizeAndCacheSection(title, chapter, section);
+        || (await synthesizeOrSilence(title, chapter, section)).audioBuffer;
 
       if (audioBuffer && onAudioChunk) {
         onAudioChunk(audioBuffer, section);
@@ -131,8 +141,14 @@ class ChapterController {
     const queryString = queryParts.length > 0 ? `?${queryParts.join('&')}` : '';
 
     const durations = sections.map((s) => {
-      const spokenText = (s.content || '').replace(/<[^>]*>/g, '').trim();
+      const spokenText = isLegacySsml(s.content)
+        ? (s.content || '').replace(/<[^>]*>/g, '').trim()
+        : spokenTextOf(s.content);
       const wordCount = spokenText.length > 0 ? spokenText.split(/\s+/).length : 0;
+
+      // Once a section has been synthesized its real length is known; declare
+      // exactly that (never an undershoot -- see the padding note above).
+      if (s.actual_duration > 0) return s.actual_duration;
 
       let dur = s.estimated_duration;
       if (dur == null || isNaN(dur) || dur <= 0) {
@@ -185,11 +201,18 @@ class ChapterController {
     }
 
     const section = sections[idx];
-    const audioBuffer = await audioStore.readSectionAudio(section.id)
-      || await synthesizeAndCacheSection(title, chapter, section);
+    const cached = await audioStore.readSectionAudio(section.id);
+    if (cached) {
+      const redirectUrl = await audioStore.getDirectUrl(section.id);
+      return redirectUrl ? { redirectUrl } : { audioBuffer: cached };
+    }
 
-    // The section is now guaranteed to be cached (just read or just
-    // synthesized). If the store can hand back a direct delivery URL (GCS),
+    const { audioBuffer, failed } = await synthesizeOrSilence(title, chapter, section);
+    // A failed section is transient silence and isn't in the store, so it
+    // can't be redirected to; serve the bytes directly.
+    if (failed) return { audioBuffer };
+
+    // The section is now cached (just synthesized). If the store can hand back a direct delivery URL (GCS),
     // redirect there instead of proxying the bytes ourselves -- this is what
     // gets a segment off the app even when it started out as a proxy-route
     // fallback because it wasn't ready yet when the playlist was built.

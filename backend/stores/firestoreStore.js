@@ -61,6 +61,19 @@ class FirestoreStore {
     await this.db.collection('titles').doc(id).update(data);
   }
 
+  // Atomic per-character update of title.voices so concurrent resolutions of
+  // different characters don't clobber each other. FieldPath handles names
+  // containing dots/quotes.
+  async setTitleVoice(titleId, name, entry) {
+    await this.db.collection('titles').doc(titleId)
+      .update(new admin.firestore.FieldPath('voices', name), entry);
+  }
+
+  async deleteTitleVoice(titleId, name) {
+    await this.db.collection('titles').doc(titleId)
+      .update(new admin.firestore.FieldPath('voices', name), admin.firestore.FieldValue.delete());
+  }
+
   async deleteTitle(id) {
     await this.db.collection('titles').doc(id).delete();
   }

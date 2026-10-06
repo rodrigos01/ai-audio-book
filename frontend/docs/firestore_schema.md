@@ -26,8 +26,12 @@ Represents an audiobook project.
   | `name` | `String` | Name of the audiobook. |
   | `owner_id` | `String` | Ownership string: either `client:<clientId>` or `user:<userId>`. |
   | `ai_casting_enabled` | `Boolean` | Flag showing if AI character casting is active. |
-  | `casting_map` | `Map` | Key-value pairs matching characters to voice IDs (e.g., `{"Narrator": "en-US-Chirp3-HD-Aoede", "Alice": "en-US-Journey-F"}`). |
-  | `narrator_voice` | `String` \| `null` | The primary voice ID selected for generic narration. |
+  | `language` | `String` | Human-readable language of the text (e.g. `English`); mapped to a BCP-47 code for TTS. |
+  | `voices` | `Map` | Per-character voices, keyed by the script speaker label (plus `Narrator`). Each value: `kind` (`named` = custom Voice Design voice, `supporting` = Voice Library voice), `gender`, `personality`, `description` (voice-only description used for design/matching), `origin` (`design` \| `library` \| `null` until resolved), `voiceId`, `fallback` (resolved via the other path after a failure, e.g. the 200-designed-voices-per-project quota), `pinned` (user-picked, never re-resolved), `hash` (inputs the current voice was resolved from), `aliasOf` (speaker uses another character's voice; set on `Narrator` for first-person narration). |
+  | `casting_map` | `Map` | **Legacy** (pre-Gemini-3.8 titles): character -> old Chirp3/Gemini voice id. Still read as a fallback; mapped to a Voice Library voice. |
+  | `narrator_voice` | `String` \| `null` | Voice Library id chosen by the user for narration; when null and AI casting is on, a narrator voice is designed (`voices.Narrator`). |
+  | `narrator_personality` | `String` \| `null` | How the narrator should sound. |
+  | `character_personalities` | `Map` | **Legacy** personality strings; new titles keep this in `voices`. |
   | `created_at` | `Timestamp` | Server timestamp of creation date. |
 
 * **Security Rules:**
@@ -48,9 +52,10 @@ Contains the textual or SSML content for individual audiobook sections/chapters.
   | `title_id` | `String` | Reference ID to the parent `/titles/{titleId}` document. |
   | `order_index` | `Number` | Sequence index of the chapter inside the book (1-indexed or 0-indexed). |
   | `name` | `String` \| `null` | Title or label for this specific chapter. |
-  | `content` | `String` | Raw narrative text, or SSML markup text enclosing dialogues in `<voice>` blocks. |
-  | `voice_id` | `String` | Voice identifier used for narration or fallback. |
-  | `is_ssml` | `Boolean` | Flag specifying if content contains SSML tagging. |
+  | `content` | `String` | Raw narrative text, or (after AI casting) a `Speaker: text` script: one turn per line, an optional leading `(style)` cue, inline `<laugh>`-style tags. Legacy chapters may still hold Chirp3 SSML. |
+  | `voice_id` | `String` | Narrator voice: a Voice Library id if one was chosen, otherwise the literal `designed` (the narrator's voice is designed per title, see `titles.voices.Narrator`). Never null; never sent to the TTS API. |
+  | `delivery_instruction` | `String` \| `null` | Chapter-wide tone/pacing directive from AI casting. |
+  | `audio_version` | `Number` | Incremented whenever the chapter's audio is invalidated; offline downloads compare against it. |
   | `ai_casting_status` | `String` \| `null` | AI voice casting status: `'in_progress'`, `'completed'`, `'failed'`, or `null`. |
   | `created_at` | `Timestamp` | Server timestamp of chapter creation. |
 
@@ -61,7 +66,7 @@ Contains the textual or SSML content for individual audiobook sections/chapters.
 ---
 
 ### 3. `chapter_sections`
-Audiobook chapters are split into smaller paragraphs or SSML sections for synthesis limits and chunked streaming.
+Audiobook chapters are split into small sections (about 600-800 bytes, at most 2 distinct speakers each); one section is one Gemini TTS request and one HLS segment.
 
 * **Document Path:** `/chapter_sections/{sectionId}`
 * **Fields:**
@@ -70,9 +75,11 @@ Audiobook chapters are split into smaller paragraphs or SSML sections for synthe
   | `id` | `String` | Unique UUID matching the document ID. |
   | `chapter_id` | `String` | Reference ID to the parent `/chapters/{chapterId}` document. |
   | `section_index` | `Number` | Ordering integer for this chunk within the chapter. |
-  | `content` | `String` | Raw text or valid SSML sub-block (`<speak>...</speak>`) for this section. |
+  | `content` | `String` | Plain text or `Speaker: text` script lines for this section (legacy: SSML). |
   | `status` | `String` | Audio generation status: `pending` or `generated`. |
-  | `audio_file_path` | `String` \| `null` | Server local storage path to the synthesized MP3 file (e.g., `.../audio_files/{sectionId}.mp3`). |
+  | `audio_file_path` | `String` \| `null` | Storage path of the synthesized AAC file (`audio_files/v2/{sectionId}.aac`). |
+  | `actual_duration` | `Number` \| omitted | Real length in seconds once synthesized; the HLS playlist declares it in `#EXTINF`. |
+  | `estimated_start_time` / `estimated_duration` | `Number` | Estimates used before a section has been synthesized. |
   | `audio_url` | `String` \| `null` | URL endpoint reference to play back or download the section. |
 
 * **Security Rules:**

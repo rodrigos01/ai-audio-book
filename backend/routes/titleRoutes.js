@@ -9,7 +9,6 @@ router.post('/', async (req, res) => {
     const result = await titleController.createTitle({
       name: req.body.name,
       ai_casting_enabled: req.body.ai_casting_enabled,
-      tts_tier: req.body.tts_tier,
       narrator_voice: req.body.narrator_voice,
       language: req.body.language,
       clientId: req.clientId,
@@ -29,6 +28,7 @@ router.patch('/:id', authMiddleware, async (req, res) => {
       casting_map: req.body.casting_map,
       narrator_voice: req.body.narrator_voice,
       language: req.body.language,
+      voices: req.body.voices,
       clientId: req.clientId,
       userId: req.userId
     });
@@ -65,6 +65,24 @@ router.post('/:id/chapters', authMiddleware, async (req, res) => {
       userId: req.userId
     });
     res.json(result);
+  } catch (err) {
+    handleRouteError(res, err);
+  }
+});
+
+// Sample of a character's current voice (synthesized once, then cached). Plain
+// GET so an <audio> element can use it with ?token= / ?client_id= like HLS.
+router.get('/:id/voices/:name/preview', async (req, res) => {
+  try {
+    const audio = await titleController.getVoicePreview({
+      id: req.params.id,
+      name: req.params.name,
+      clientId: req.clientId,
+      userId: req.userId
+    });
+    res.setHeader('Content-Type', 'audio/aac');
+    res.setHeader('Content-Length', audio.length);
+    res.send(audio);
   } catch (err) {
     handleRouteError(res, err);
   }
