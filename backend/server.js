@@ -48,7 +48,19 @@ if (fs.existsSync(frontendDist)) {
   debugLog(`Frontend dist not found at: ${frontendDist}`);
 }
 
-app.use(cors({
+// HLS playlist/segments are fetched by Cast receivers (and other players) from
+// arbitrary origins, with auth carried in ?token= / ?client_id= rather than
+// cookies. Allow any origin (no credentials) on just these routes; this must
+// come before the restrictive app-wide CORS below, which rejects unknown origins.
+app.use('/api/chapters/:chapterId/hls', cors({
+  origin: '*',
+  methods: ['GET', 'HEAD', 'OPTIONS'],
+  allowedHeaders: ['Range', 'Authorization', 'X-Client-ID', 'Content-Type'],
+  exposedHeaders: ['Content-Length', 'Content-Range', 'Accept-Ranges'],
+  maxAge: 86400
+}));
+
+const restrictedCors = cors({
   origin: function (origin, callback) {
     if (!origin) return callback(null, true);
     if (allowedOrigins.indexOf(origin) !== -1) return callback(null, true);
@@ -68,7 +80,10 @@ app.use(cors({
     callback(new Error('Not allowed by CORS'));
   },
   credentials: true
-}));
+});
+app.use((req, res, next) => (
+  /^\/api\/chapters\/[^/]+\/hls\//.test(req.path) ? next() : restrictedCors(req, res, next)
+));
 
 app.use(express.json({ limit: '5mb' }));
 app.use(cookieParser());
